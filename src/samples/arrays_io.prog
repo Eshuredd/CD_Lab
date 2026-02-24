@@ -1,0 +1,19 @@
+// Arrays, print, and readInt
+int main() {
+    int arr[5];
+    int i;
+    int n;
+
+    n = readInt();
+    i = 0;
+    while (i < 5) {
+        arr[i] = n + i;
+        i = i + 1;
+    }
+
+    print("First element:");
+    print(arr[0]);
+    print("Last element:");
+    print(arr[4]);
+    return 0;
+}
