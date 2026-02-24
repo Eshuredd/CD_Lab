@@ -1,4 +1,3 @@
-// Minimal program: variables and return
 int main() {
     int x;
     int y;

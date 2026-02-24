@@ -1,6 +1,7 @@
 from lexer.lexer import Lexer
 from parser.parser import Parser, ParseError
-from semantic import TypeChecker, SemanticError
+from symbol_table import SemanticError
+from type_checker import TypeChecker
 
 
 def main():

@@ -1,4 +1,3 @@
-// Functions: parameters, return value, recursion (factorial)
 int factorial(int n) {
     if (n <= 1) {
         return 1;
