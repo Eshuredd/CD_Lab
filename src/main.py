@@ -1,6 +1,6 @@
 from lexer.lexer import Lexer
 from parser.parser import Parser, ParseError
-from semantic import SemanticAnalyzer, SemanticError
+from semantic import TypeChecker, SemanticError
 
 
 def main():
@@ -27,9 +27,9 @@ def main():
     print(ast)
 
     print("-" * 80)
-    analyzer = SemanticAnalyzer()
+    type_checker = TypeChecker()
     try:
-        analyzer.analyze(ast)
+        type_checker.analyze(ast)
     except SemanticError as e:
         print("Semantic error:", e)
         return

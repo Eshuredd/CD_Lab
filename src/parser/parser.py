@@ -101,10 +101,6 @@ class Parser:
             return tok.value
         raise ParseError("Expected type")
 
-    # -------------------------
-    # Blocks + Statements
-    # -------------------------
-
     def parse_block(self):
         self.expect("SYMBOL", "{")
         decls = []
@@ -231,9 +227,6 @@ class Parser:
         body = self.parse_statement()
         return ForStmt(init, cond, step, body)
 
-    # -------------------------
-    # Expressions
-    # -------------------------
 
     def parse_expression(self):
         return self.parse_assignment()

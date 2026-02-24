@@ -1,0 +1,29 @@
+int max2(int a, int b) {
+    if (a > b) {
+        return a;
+    } else {
+        return b;
+    }
+}
+
+int main() {
+    int x;
+    int y;
+    int m;
+    int arr[3];
+
+    x = readInt();
+    y = readInt();
+
+    m = max2(x, y);
+
+    arr[0] = x;
+    arr[1] = y;
+    arr[2] = m;
+
+    print("max is:");
+    print(arr[2]);
+
+    return 0;
+}
+
