@@ -8,10 +8,12 @@ class TypeChecker:
         self.supported_types = ["int", "uint32", "float", "bool", "char", "void"]
         self.global_symbols = SymbolTable()
         self.current_function_def = None
+        self._loop_depth = 0  # for break/continue: must be inside a loop
 
         # Built-in functions
         self.global_symbols.define(FunctionSymbol("readInt", "int", []))
         self.global_symbols.define(FunctionSymbol("print", "void", []))
+        self.global_symbols.define(FunctionSymbol("exit", "void", ["int"]))
 
     def analyze(self, program):
 
@@ -32,7 +34,6 @@ class TypeChecker:
         if self.global_symbols.lookup("main") is None:
             raise SemanticError("main function missing")
 
-        # Second pass
         for function in program.functions:
             self.check_function(function)
 
@@ -40,7 +41,6 @@ class TypeChecker:
         self.current_function_def = function_def
         function_scope = SymbolTable(self.global_symbols)
 
-        # add parameters
         for param in function_def.params:
             function_scope.define(VarSymbol(param.name, param.param_type))
 
@@ -89,7 +89,11 @@ class TypeChecker:
             if condition_type != "bool":
                 raise SemanticError("While condition must be bool")
 
-            self.check_statement(statement.body, scope)
+            self._loop_depth += 1
+            try:
+                self.check_statement(statement.body, scope)
+            finally:
+                self._loop_depth -= 1
 
         elif isinstance(statement, ForStmt):
             if statement.init:
@@ -103,7 +107,19 @@ class TypeChecker:
             if statement.increment:
                 self.check_expression(statement.increment, scope)
 
-            self.check_statement(statement.body, scope)
+            self._loop_depth += 1
+            try:
+                self.check_statement(statement.body, scope)
+            finally:
+                self._loop_depth -= 1
+
+        elif isinstance(statement, BreakStmt):
+            if self._loop_depth <= 0:
+                raise SemanticError("break outside loop")
+
+        elif isinstance(statement, ContinueStmt):
+            if self._loop_depth <= 0:
+                raise SemanticError("continue outside loop")
 
         elif isinstance(statement, ReturnStmt):
             expected_type = self.current_function_def.return_type
@@ -187,6 +203,14 @@ class TypeChecker:
             if expression.callee.name == "print":
                 for arg in expression.args:
                     self.check_expression(arg, scope)
+                return "void"
+
+            if expression.callee.name == "exit":
+                if len(expression.args) != 1:
+                    raise SemanticError("exit requires exactly one argument (exit code)")
+                code_type = self.check_expression(expression.args[0], scope)
+                if code_type not in ["int", "uint32"]:
+                    raise SemanticError("exit code must be int or uint32")
                 return "void"
 
             if len(expression.args) != len(symbol.param_types):

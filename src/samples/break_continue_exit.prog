@@ -1,0 +1,31 @@
+// Sample program: break, continue, and exit
+// Run through the compiler (lexer -> parser -> type checker) to verify all pass.
+
+int main() {
+    int i;
+    int sum;
+
+    sum = 0;
+    i = 0;
+
+    // while with break: exit when sum reaches 100
+    while (i < 20) {
+        sum = sum + i;
+        if (sum >= 100) {
+            break;
+        }
+        i = i + 1;
+    }
+
+    // for with continue: skip even indices
+    for (i = 0; i < 10; i = i + 1) {
+        if (i % 2 == 0) {
+            continue;
+        }
+        sum = sum + 1;
+    }
+
+    print("done");
+    exit(0);
+    return 0;  // unreachable after exit, but type checker allows it
+}

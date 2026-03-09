@@ -29,8 +29,28 @@ class Parser:
     def __init__(self, tokens):
         self.tokens = tokens
         self.index = 0
+        self.errors = []
 
         self.type_keywords = ["uint32", "int", "float", "bool", "char", "void"]
+
+    def _sync_to_next_statement(self):
+        while self.current() is not None:
+            tok = self.current()
+            if tok.type == "SYMBOL" and tok.value == "}":
+                return
+            if tok.type == "SYMBOL" and tok.value == ";":
+                self.advance()
+                return
+            if tok.type == "KEYWORD" and tok.value in ("if", "while", "for", "return", "break", "continue"):
+                return
+            self.advance()
+
+    def _sync_to_next_function(self):
+        while self.current() is not None:
+            tok = self.current()
+            if tok.type == "KEYWORD" and tok.value in self.type_keywords:
+                return
+            self.advance()
 
     def current(self):
         if self.index >= len(self.tokens):
@@ -71,7 +91,11 @@ class Parser:
     def parse(self):
         functions = []
         while self.current() is not None:
-            functions.append(self.parse_function())
+            try:
+                functions.append(self.parse_function())
+            except ParseError as e:
+                self.errors.append(str(e))
+                self._sync_to_next_function()
         return Program(functions)
 
     def parse_function(self):
@@ -112,14 +136,26 @@ class Parser:
 
             tok = self.current()
             if tok is None:
-                raise ParseError("Unexpected end of input in block")
+                break
 
             if tok.type == "KEYWORD" and tok.value == "const":
-                decls.append(self.parse_var_decl())
+                try:
+                    decls.append(self.parse_var_decl())
+                except ParseError as e:
+                    self.errors.append(str(e))
+                    self._sync_to_next_statement()
             elif tok.type == "KEYWORD" and tok.value in self.type_keywords:
-                decls.append(self.parse_var_decl())
+                try:
+                    decls.append(self.parse_var_decl())
+                except ParseError as e:
+                    self.errors.append(str(e))
+                    self._sync_to_next_statement()
             else:
-                stmts.append(self.parse_statement())
+                try:
+                    stmts.append(self.parse_statement())
+                except ParseError as e:
+                    self.errors.append(str(e))
+                    self._sync_to_next_statement()
 
         return Block(decls, stmts)
 
