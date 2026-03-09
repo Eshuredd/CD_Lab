@@ -191,12 +191,10 @@ def ir_linear_to_dot(program: IRProgram) -> str:
             label = _escape_label(f"{i}: {insn!r}")
             lines.append(f"    \"{node_name}\" [label=\"{label}\"];")
 
-        # Edges: fall-through plus jumps
         for i, insn in enumerate(insns):
             node_name = f"{func.name}_{i}"
             op, args = insn.op, insn.args
 
-            # Fall-through to next instruction unless an unconditional jump / return / exit
             if op not in ("JMP", "RET", "EXIT") and i + 1 < len(insns):
                 next_name = f"{func.name}_{i + 1}"
                 lines.append(f"    \"{node_name}\" -> \"{next_name}\";")

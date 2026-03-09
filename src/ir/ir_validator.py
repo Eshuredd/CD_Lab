@@ -19,7 +19,7 @@ from .ir import (
     Instruction,
 )
 
-# Built-in functions (no body in IR)
+# Built-in functions
 BUILTINS = {"print", "readInt", "exit"}
 
 
@@ -37,20 +37,18 @@ def _get_operands_used(insn: Instruction) -> List[str]:
     op, args = insn.op, insn.args
     used: List[str] = []
     if op == "CONST":
-        # dest, (kind, value) — only dest is new
         pass
     elif op in ("LOAD", "READ_INT"):
         # dest, [src for LOAD]
         if op == "LOAD":
             used.append(args[1])
     elif op == "STORE":
-        used.append(args[1])  # src
+        used.append(args[1])
     elif op in ("LOAD_ARR", "STORE_ARR"):
-        # LOAD_ARR dest arr index; STORE_ARR arr index src
         used.append(args[1])  # array name
-        used.append(args[2])  # index (temp or var)
+        used.append(args[2])  # index
         if op == "STORE_ARR":
-            used.append(args[3])  # src
+            used.append(args[3])
     elif op in ("ADD", "SUB", "MUL", "DIV", "MOD", "LT", "LE", "GT", "GE", "EQ", "NE", "AND", "OR"):
         used.extend([args[1], args[2]])
     elif op in ("NEG", "NOT", "INC", "DEC"):
@@ -60,8 +58,6 @@ def _get_operands_used(insn: Instruction) -> List[str]:
     elif op == "PARAM":
         used.append(args[0])
     elif op == "CALL":
-        # args: [dest, name, num_args]; dest may be ""
-        # Params are passed via preceding PARAMs; we check count separately
         pass
     elif op == "RET":
         if args[0]:
@@ -123,7 +119,6 @@ def _validate_function(func: IRFunction, known_functions: Set[str]) -> None:
         if op == "LABEL":
             continue
 
-        # --- Jumps: target must exist (forward refs OK) ---
         if op == "JMP":
             target = args[0]
             if target not in labels:
@@ -147,7 +142,6 @@ def _validate_function(func: IRFunction, known_functions: Set[str]) -> None:
                     i,
                 )
 
-        # --- PARAM / CALL ---
         if op == "PARAM":
             param_count += 1
             src = args[0]
@@ -212,7 +206,6 @@ def _validate_function(func: IRFunction, known_functions: Set[str]) -> None:
                     )
             continue
 
-        # --- Use before def ---
         for u in _get_operands_used(insn):
             if u not in defined:
                 raise IRValidationError(
@@ -221,7 +214,6 @@ def _validate_function(func: IRFunction, known_functions: Set[str]) -> None:
                     i,
                 )
 
-        # --- Def ---
         for d in _get_operands_defined(insn):
             defined.add(d)
 

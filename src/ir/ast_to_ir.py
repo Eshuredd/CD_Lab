@@ -74,7 +74,7 @@ class IRBuilder:
         self._temp_counter = 0
         self._label_counter = 0
         self._instructions: List[Instruction] = []
-        self._loop_stack: List[tuple] = []  # (exit_label, head_label) per nested loop
+        self._loop_stack: List[tuple] = []
 
     def _fresh_temp(self) -> str:
         t = f"%{self._temp_counter}"
@@ -128,7 +128,6 @@ class IRBuilder:
         if decl.initializer is not None:
             src = self._expr(decl.initializer)
             self._emit(STORE(decl.name, src))
-        # Uninitialized vars: backend can zero or leave undefined per spec
 
     def _build_statement(self, stmt: Any) -> None:
         if isinstance(stmt, IfStmt):
