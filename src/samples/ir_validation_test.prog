@@ -1,0 +1,36 @@
+void logBool(bool value) {
+    if (value) {
+        print("flag is true");
+    } else {
+        print("flag is false");
+    }
+    return;
+}
+
+int add(int a, int b) {
+    int sum;
+    sum = a + b;
+    return sum;
+}
+
+int main() {
+    int x;
+    int y;
+    int result;
+    bool bigger;
+
+    x = readInt();
+    y = readInt();
+
+    result = add(x, y);
+    bigger = result > 10;
+
+    logBool(bigger);
+
+    if (bigger) {
+        exit(0);
+    }
+
+    return 0;
+}
+
