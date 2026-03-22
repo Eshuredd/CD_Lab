@@ -1,0 +1,29 @@
+// dead_code_elimination.prog — Week 8 sample (dead-code elimination after folding).
+//
+// Build and inspect IR (console shows four snapshots):
+//   cd src
+//   python main.py samples/dead_code_elimination.prog
+//
+//   1) IR (before optimization)        — raw AST-to-IR
+//   2) IR (after constant folding)     — Week 7: const evaluation
+//   3) IR (after strength reduction)    — Week 9: cheaper ops (see strength_reduction.prog)
+//   4) IR (after dead code elimination) — Week 8: unused pure defs removed
+//
+// Optional DOT after constant folding only:
+//   python main.py samples/dead_code_elimination.prog --dump-ir-after-cf ir_after_cf.dot
+//
+// Compare "Constant Folding Pass" / "Dead Code Elimination Pass" line counts to the IR blocks.
+
+int main() {
+    int u;
+    int v;
+    int w;
+
+    u = 9 + 1;
+    v = 100 / 10;
+    w = 2 * 3 + 4;
+
+    print(u, v, w);
+    exit(0);
+    return 0;
+}

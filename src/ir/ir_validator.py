@@ -44,11 +44,15 @@ def _get_operands_used(insn: Instruction) -> List[str]:
             used.append(args[1])
     elif op == "STORE":
         used.append(args[1])
-    elif op in ("LOAD_ARR", "STORE_ARR"):
-        used.append(args[1])  # array name
-        used.append(args[2])  # index
-        if op == "STORE_ARR":
-            used.append(args[3])
+    elif op == "LOAD_ARR":
+        # [dest, array, index]
+        used.append(args[1])
+        used.append(args[2])
+    elif op == "STORE_ARR":
+        # [array, index, src]
+        used.append(args[0])
+        used.append(args[1])
+        used.append(args[2])
     elif op in ("ADD", "SUB", "MUL", "DIV", "MOD", "LT", "LE", "GT", "GE", "EQ", "NE", "AND", "OR"):
         used.extend([args[1], args[2]])
     elif op in ("NEG", "NOT", "INC", "DEC"):

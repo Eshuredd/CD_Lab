@@ -25,13 +25,82 @@ class ParseError(Exception):
     pass
 
 
+def _describe_token(tok):
+    """Short description of a token for error messages (compiler-style)."""
+    if tok is None:
+        return "end of input"
+    t = tok.type
+    v = tok.value
+    if t == "KEYWORD":
+        return f"keyword '{v}'"
+    if t == "IDENTIFIER":
+        return f"identifier '{v}'"
+    if t == "NUMBER":
+        return f"integer literal {v!r}"
+    if t == "FLOAT_LIT":
+        return f"float literal {v!r}"
+    if t == "BOOL_LIT":
+        return f"boolean literal {v!r}"
+    if t == "CHAR_LIT":
+        return "character literal"
+    if t == "STRING_LIT":
+        return "string literal"
+    if t == "SYMBOL":
+        return repr(v)
+    return f"{t} {v!r}"
+
+
+def _describe_expected(ttype, value=None):
+    """What the parser was expecting, for error messages."""
+    if ttype == "IDENTIFIER" and value is None:
+        return "an identifier"
+    if ttype == "NUMBER" and value is None:
+        return "an integer literal"
+    if ttype == "KEYWORD" and value is not None:
+        return f"keyword '{value}'"
+    if ttype == "SYMBOL" and value is not None:
+        return repr(value)
+    if ttype == "SYMBOL":
+        return "a symbol"
+    if ttype == "KEYWORD":
+        return "a keyword"
+    return ttype.lower().replace("_", " ")
+
+
 class Parser:
-    def __init__(self, tokens):
+    def __init__(self, tokens, source_path=None):
         self.tokens = tokens
         self.index = 0
         self.errors = []
+        self.source_path = source_path
 
         self.type_keywords = ["uint32", "int", "float", "bool", "char", "void"]
+
+    def _location_token(self, tok):
+        """Use last token for end-of-file situations."""
+        if tok is not None:
+            return tok
+        if self.tokens:
+            return self.tokens[-1]
+        return None
+
+    def _format_syntax_error(self, tok, message: str) -> str:
+        """
+        Classic-style diagnostic: with source path, 'file:line: syntax error: ...';
+        otherwise 'line L: syntax error: ...'.
+        """
+        t = self._location_token(tok)
+        line = getattr(t, "line", None) if t is not None else None
+        col = getattr(t, "column", None) if t is not None else None
+
+        if self.source_path and line is not None:
+            return f"{self.source_path}:{line}: syntax error: {message}"
+        if line is not None:
+            return f"line {line}: syntax error: {message}"
+        return f"syntax error: {message}"
+
+    def _raise_syntax_error(self, tok, message: str):
+        raise ParseError(self._format_syntax_error(tok, message))
 
     def _sync_to_next_statement(self):
         while self.current() is not None:
@@ -76,14 +145,19 @@ class Parser:
 
     def expect(self, ttype, value=None):
         tok = self.current()
+        expected = _describe_expected(ttype, value)
         if tok is None:
-            raise ParseError("Unexpected end of input")
+            self._raise_syntax_error(
+                None,
+                f"unexpected end of input while expecting {expected}",
+            )
 
-        if tok.type != ttype:
-            raise ParseError("Unexpected token: " + str(tok.value))
-
-        if value is not None and tok.value != value:
-            raise ParseError("Expected " + value)
+        if tok.type != ttype or (value is not None and tok.value != value):
+            found = _describe_token(tok)
+            self._raise_syntax_error(
+                tok,
+                f"expected {expected}, found {found}",
+            )
 
         self.advance()
         return tok
@@ -123,7 +197,8 @@ class Parser:
         if tok and tok.type == "KEYWORD" and tok.value in self.type_keywords:
             self.advance()
             return tok.value
-        raise ParseError("Expected type")
+        found = _describe_token(tok)
+        self._raise_syntax_error(tok, f"expected a type name (int, void, ...), found {found}")
 
     def parse_block(self):
         self.expect("SYMBOL", "{")
@@ -183,7 +258,7 @@ class Parser:
     def parse_statement(self):
         tok = self.current()
         if tok is None:
-            raise ParseError("Unexpected end of input")
+            self._raise_syntax_error(None, "unexpected end of input while parsing a statement")
 
         # block
         if tok.type == "SYMBOL" and tok.value == "{":
@@ -271,9 +346,13 @@ class Parser:
         left = self.parse_or()
 
         if self.match("SYMBOL", "="):
+            eq_tok = self.tokens[self.index - 1]
             right = self.parse_assignment()
             if not isinstance(left, Variable) and not isinstance(left, ArrayAccess):
-                raise ParseError("Invalid assignment")
+                self._raise_syntax_error(
+                    eq_tok,
+                    "invalid left-hand side of assignment (expected variable or array element)",
+                )
             return Assign(left, right)
 
         return left
@@ -384,7 +463,7 @@ class Parser:
     def parse_primary(self):
         tok = self.current()
         if tok is None:
-            raise ParseError("Invalid expression")
+            self._raise_syntax_error(None, "unexpected end of input in expression")
 
         if tok.type == "NUMBER":
             self.advance()
@@ -415,4 +494,7 @@ class Parser:
             self.expect("SYMBOL", ")")
             return expr
 
-        raise ParseError("Invalid expression")
+        self._raise_syntax_error(
+            tok,
+            f"expected primary expression (literal, identifier, or '(' ... ')'), found {_describe_token(tok)}",
+        )

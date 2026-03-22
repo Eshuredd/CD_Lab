@@ -1,0 +1,46 @@
+
+int main() {
+    int a;
+    int b;
+    int c;
+    int d;
+    int e;
+    int f;
+    int g;
+    bool h;
+    bool lt_res;
+    bool gt_res;
+    bool eq_res;
+    bool ne_res;
+    bool le_res;
+    bool ge_res;
+    bool and_res;
+    bool or_res;
+
+    a = 2 + 3;
+    b = 10 - 4;
+    c = 3 * 7;
+    d = 20 / 4;
+    e = 17 % 5;
+    f = (2 + 3) * (10 - 4);
+    g = -7;
+    h = !false;
+    lt_res = 3 < 5;
+    gt_res = 3 > 5;
+    eq_res = 4 == 4;
+    ne_res = 4 != 4;
+    le_res = 5 <= 5;
+    ge_res = 6 >= 7;
+    and_res = true && true;
+    or_res = false || true;
+
+    if (1 == 1) {
+        int always;
+        always = 42;
+    }
+
+    print(a, b, c, d, e, f, g);
+    print(lt_res, gt_res, eq_res);
+    exit(0);
+    return 0;
+}

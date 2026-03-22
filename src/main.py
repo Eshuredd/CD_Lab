@@ -7,6 +7,7 @@ from parser.parser import Parser
 from symbol_table import SemanticError
 from type_checker import TypeChecker
 from ir import ast_to_ir, validate, IRValidationError
+from optimizer import constant_folding, dead_code_elimination, strength_reduction
 from viz import ast_to_dot, ir_linear_to_dot
 
 
@@ -49,14 +50,33 @@ def main(argv: Optional[list[str]] = None) -> None:
         metavar="FILE",
         nargs="?",
         const="-",
-        help="Emit IR (before optimizations) as Graphviz DOT (alias of --dump-ir-dot for now)",
+        help="Emit unoptimized IR as Graphviz DOT (to FILE or stdout if omitted)",
+    )
+    cli.add_argument(
+        "--dump-ir-after-cf",
+        metavar="FILE",
+        nargs="?",
+        const="-",
+        help="Emit IR after constant folding only (Graphviz DOT)",
+    )
+    cli.add_argument(
+        "--dump-ir-after-sr",
+        metavar="FILE",
+        nargs="?",
+        const="-",
+        help="Emit IR after strength reduction (Graphviz DOT)",
     )
     cli.add_argument(
         "--dump-ir-after",
         metavar="FILE",
         nargs="?",
         const="-",
-        help="Emit IR (after optimizations) as Graphviz DOT (currently same as before; no passes yet)",
+        help="Emit fully optimized IR (CF + strength reduction + DCE) as Graphviz DOT",
+    )
+    cli.add_argument(
+        "--no-optimize",
+        action="store_true",
+        help="Disable optimization passes (constant folding, strength reduction, dead-code elimination, etc.)",
     )
 
     args = cli.parse_args(argv)
@@ -74,7 +94,7 @@ def main(argv: Optional[list[str]] = None) -> None:
     print("-" * 80)
 
     errors = []
-    parser = Parser(tokens)
+    parser = Parser(tokens, source_path=str(Path(args.source)))
     ast = parser.parse()
     for msg in parser.errors:
         errors.append(("syntax", msg))
@@ -120,21 +140,69 @@ def main(argv: Optional[list[str]] = None) -> None:
         )
         return
     print("IR validation OK")
-    print("IR:")
+    print("\nIR (before optimization):")
     print(ir_program)
+    print("-" * 80)
 
-    # IR visualization.
+    # IR visualization (unoptimized snapshot).
     if args.dump_ir_dot is not None:
         ir_dot = ir_linear_to_dot(ir_program)
         _write_output(args.dump_ir_dot, ir_dot)
 
-    # For now, before/after are identical because there are no optimization passes yet.
     if args.dump_ir_before is not None:
         before_dot = ir_linear_to_dot(ir_program)
         _write_output(args.dump_ir_before, before_dot)
 
+    # ------------------------------------------------------------------
+    # Optimization passes
+    # ------------------------------------------------------------------
+    optimized_program = ir_program
+    if not args.no_optimize:
+        cf_result = constant_folding(ir_program)
+        after_cf_program = cf_result.program
+        print(cf_result.summary())
+        print("-" * 80)
+        print("\nIR (after constant folding):")
+        print(after_cf_program)
+        print("-" * 80)
+
+        if args.dump_ir_after_cf is not None:
+            _write_output(args.dump_ir_after_cf, ir_linear_to_dot(after_cf_program))
+
+        sr_result = strength_reduction(after_cf_program)
+        after_sr_program = sr_result.program
+        print(sr_result.summary())
+        print("-" * 80)
+        print("\nIR (after strength reduction):")
+        print(after_sr_program)
+        print("-" * 80)
+
+        if args.dump_ir_after_sr is not None:
+            _write_output(args.dump_ir_after_sr, ir_linear_to_dot(after_sr_program))
+
+        dce_result = dead_code_elimination(after_sr_program)
+        optimized_program = dce_result.program
+        print(dce_result.summary())
+        print("-" * 80)
+        try:
+            validate(optimized_program)
+            print("IR validation OK (after optimizations)")
+        except IRValidationError as e:
+            print(
+                f"IR validation error after optimization in {e.function_name or 'program'}"
+                + (f" at instruction {e.instruction_index}" if e.instruction_index >= 0 else "")
+                + f": {e}"
+            )
+            return
+        print("-" * 80)
+        print("\nIR (after dead code elimination):")
+        print(optimized_program)
+        print("-" * 80)
+    else:
+        print("Optimizations skipped (--no-optimize).")
+
     if args.dump_ir_after is not None:
-        after_dot = ir_linear_to_dot(ir_program)
+        after_dot = ir_linear_to_dot(optimized_program)
         _write_output(args.dump_ir_after, after_dot)
 
 
