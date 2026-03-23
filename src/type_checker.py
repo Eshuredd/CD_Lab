@@ -15,16 +15,21 @@ class TypeChecker:
         self.global_symbols.define(FunctionSymbol("print", "void", []))
         self.global_symbols.define(FunctionSymbol("exit", "void", ["int"]))
 
+    def _err(self, msg: str, node) -> None:
+        line = getattr(node, "line", None)
+        col = getattr(node, "column", None)
+        raise SemanticError(msg, line=line, column=col)
+
     def analyze(self, program):
 
         for function in program.functions:
             if function.return_type not in self.supported_types:
-                raise SemanticError("Invalid return type")
+                self._err("Invalid return type", function)
 
             parameter_types = []
             for param in function.params:
                 if param.param_type not in self.supported_types:
-                    raise SemanticError("Invalid parameter type")
+                    self._err("Invalid parameter type", param)
                 parameter_types.append(param.param_type)
 
             self.global_symbols.define(
@@ -32,7 +37,7 @@ class TypeChecker:
             )
 
         if self.global_symbols.lookup("main") is None:
-            raise SemanticError("main function missing")
+            self._err("main function missing", program)
 
         for function in program.functions:
             self.check_function(function)
@@ -52,7 +57,7 @@ class TypeChecker:
 
         for declaration in block.declarations:
             if declaration.var_type not in self.supported_types:
-                raise SemanticError("Invalid variable type")
+                self._err("Invalid variable type", declaration)
 
             local_scope.define(
                 VarSymbol(
@@ -68,7 +73,7 @@ class TypeChecker:
                     declaration.initializer, local_scope
                 )
                 if initializer_type != declaration.var_type:
-                    raise SemanticError("Type mismatch in initialization")
+                    self._err("Type mismatch in initialization", declaration)
 
         for statement in block.statements:
             self.check_statement(statement, local_scope)
@@ -78,7 +83,7 @@ class TypeChecker:
         if isinstance(statement, IfStmt):
             condition_type = self.check_expression(statement.condition, scope)
             if condition_type != "bool":
-                raise SemanticError("If condition must be bool")
+                self._err("If condition must be bool", statement.condition)
 
             self.check_statement(statement.then_branch, scope)
             if statement.else_branch:
@@ -87,7 +92,7 @@ class TypeChecker:
         elif isinstance(statement, WhileStmt):
             condition_type = self.check_expression(statement.condition, scope)
             if condition_type != "bool":
-                raise SemanticError("While condition must be bool")
+                self._err("While condition must be bool", statement.condition)
 
             self._loop_depth += 1
             try:
@@ -102,7 +107,7 @@ class TypeChecker:
             if statement.condition:
                 condition_type = self.check_expression(statement.condition, scope)
                 if condition_type != "bool":
-                    raise SemanticError("For condition must be bool")
+                    self._err("For condition must be bool", statement.condition)
 
             if statement.increment:
                 self.check_expression(statement.increment, scope)
@@ -115,22 +120,22 @@ class TypeChecker:
 
         elif isinstance(statement, BreakStmt):
             if self._loop_depth <= 0:
-                raise SemanticError("break outside loop")
+                self._err("break outside loop", statement)
 
         elif isinstance(statement, ContinueStmt):
             if self._loop_depth <= 0:
-                raise SemanticError("continue outside loop")
+                self._err("continue outside loop", statement)
 
         elif isinstance(statement, ReturnStmt):
             expected_type = self.current_function_def.return_type
 
             if statement.value is None:
                 if expected_type != "void":
-                    raise SemanticError("Return value required")
+                    self._err("Return value required", statement)
             else:
                 value_type = self.check_expression(statement.value, scope)
                 if value_type != expected_type:
-                    raise SemanticError("Return type mismatch")
+                    self._err("Return type mismatch", statement)
 
         elif isinstance(statement, ExprStmt):
             if statement.expr:
@@ -147,31 +152,48 @@ class TypeChecker:
         if isinstance(expression, Variable):
             symbol = scope.lookup(expression.name)
             if symbol is None:
-                raise SemanticError("Variable not declared")
+                self._err("Variable not declared", expression)
             if isinstance(symbol, FunctionSymbol):
-                raise SemanticError("Function used as variable")
+                self._err("Function used as variable", expression)
             return symbol.type_name
 
         if isinstance(expression, Assign):
-            if not isinstance(expression.target, Variable):
-                raise SemanticError("Invalid assignment")
+            # Assignment targets may be either:
+            #   - a variable:    x = expr;
+            #   - an array elem: arr[i] = expr;
+            if isinstance(expression.target, Variable):
+                symbol = scope.lookup(expression.target.name)
+                if symbol is None:
+                    self._err("Variable not declared", expression.target)
+                value_type = self.check_expression(expression.value, scope)
+                if value_type != symbol.type_name:
+                    self._err("Assignment type mismatch", expression)
+                return symbol.type_name
 
-            symbol = scope.lookup(expression.target.name)
-            if symbol is None:
-                raise SemanticError("Variable not declared")
+            if isinstance(expression.target, ArrayAccess):
+                symbol = scope.lookup(expression.target.array.name)
+                if symbol is None:
+                    self._err("Array not declared", expression.target.array)
+                if not getattr(symbol, "is_array", False):
+                    self._err("Array not declared", expression.target.array)
 
-            value_type = self.check_expression(expression.value, scope)
-            if value_type != symbol.type_name:
-                raise SemanticError("Assignment type mismatch")
+                index_type = self.check_expression(expression.target.index, scope)
+                if index_type not in ["int", "uint32"]:
+                    self._err("Invalid index type", expression.target.index)
 
-            return symbol.type_name
+                value_type = self.check_expression(expression.value, scope)
+                if value_type != symbol.type_name:
+                    self._err("Assignment type mismatch", expression)
+                return symbol.type_name
+
+            self._err("Invalid assignment", expression)
 
         if isinstance(expression, BinaryOp):
             left_type = self.check_expression(expression.left, scope)
             right_type = self.check_expression(expression.right, scope)
 
             if left_type != right_type:
-                raise SemanticError("Type mismatch in binary op")
+                self._err("Type mismatch in binary op", expression)
 
             if expression.op in ["+", "-", "*", "/", "%"]:
                 return left_type
@@ -181,7 +203,7 @@ class TypeChecker:
 
             if expression.op in ["&&", "||"]:
                 if left_type != "bool":
-                    raise SemanticError("Logical op needs bool")
+                    self._err("Logical op needs bool", expression)
                 return "bool"
 
         if isinstance(expression, UnaryOp):
@@ -189,7 +211,7 @@ class TypeChecker:
 
             if expression.op == "!":
                 if operand_type != "bool":
-                    raise SemanticError("! needs bool")
+                    self._err("! needs bool", expression)
                 return "bool"
 
             if expression.op in ["-", "++", "--"]:
@@ -198,7 +220,7 @@ class TypeChecker:
         if isinstance(expression, Call):
             symbol = self.global_symbols.lookup(expression.callee.name)
             if symbol is None:
-                raise SemanticError("Function not declared")
+                self._err("Function not declared", expression)
 
             if expression.callee.name == "print":
                 for arg in expression.args:
@@ -207,31 +229,31 @@ class TypeChecker:
 
             if expression.callee.name == "exit":
                 if len(expression.args) != 1:
-                    raise SemanticError("exit requires exactly one argument (exit code)")
+                    self._err("exit requires exactly one argument (exit code)", expression)
                 code_type = self.check_expression(expression.args[0], scope)
                 if code_type not in ["int", "uint32"]:
-                    raise SemanticError("exit code must be int or uint32")
+                    self._err("exit code must be int or uint32", expression.args[0])
                 return "void"
 
             if len(expression.args) != len(symbol.param_types):
-                raise SemanticError("Wrong number of arguments")
+                self._err("Wrong number of arguments", expression)
 
             for index in range(len(expression.args)):
                 argument_type = self.check_expression(expression.args[index], scope)
                 if argument_type != symbol.param_types[index]:
-                    raise SemanticError("Argument type mismatch")
+                    self._err("Argument type mismatch", expression.args[index])
 
             return symbol.type_name
 
         if isinstance(expression, ArrayAccess):
             symbol = scope.lookup(expression.array.name)
             if symbol is None:
-                raise SemanticError("Array not declared")
+                self._err("Array not declared", expression.array)
 
             index_type = self.check_expression(expression.index, scope)
             if index_type not in ["int", "uint32"]:
-                raise SemanticError("Invalid index type")
+                self._err("Invalid index type", expression.index)
 
             return symbol.type_name
 
-        raise SemanticError("Invalid expression")
+        self._err("Invalid expression", expression)

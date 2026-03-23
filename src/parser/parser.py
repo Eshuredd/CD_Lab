@@ -86,21 +86,27 @@ class Parser:
 
     def _format_syntax_error(self, tok, message: str) -> str:
         """
-        Classic-style diagnostic: with source path, 'file:line: syntax error: ...';
-        otherwise 'line L: syntax error: ...'.
+        Semantic-style diagnostic: include only `(line N)` (no column).
         """
         t = self._location_token(tok)
         line = getattr(t, "line", None) if t is not None else None
-        col = getattr(t, "column", None) if t is not None else None
 
         if self.source_path and line is not None:
-            return f"{self.source_path}:{line}: syntax error: {message}"
+            return f"{self.source_path}: syntax error: {message} (line {line})"
         if line is not None:
-            return f"line {line}: syntax error: {message}"
+            return f"syntax error: {message} (line {line})"
         return f"syntax error: {message}"
 
     def _raise_syntax_error(self, tok, message: str):
         raise ParseError(self._format_syntax_error(tok, message))
+
+    def _attach_loc(self, node, tok):
+        """Attach line/column to an AST node (used for semantic diagnostics)."""
+        if tok is None:
+            return node
+        node.line = getattr(tok, "line", None)
+        node.column = getattr(tok, "column", None)
+        return node
 
     def _sync_to_next_statement(self):
         while self.current() is not None:
@@ -174,7 +180,8 @@ class Parser:
 
     def parse_function(self):
         return_type = self.parse_type()
-        name = self.expect("IDENTIFIER").value
+        name_tok = self.expect("IDENTIFIER")
+        name = name_tok.value
 
         self.expect("SYMBOL", "(")
         params = []
@@ -240,7 +247,8 @@ class Parser:
             is_const = True
 
         vtype = self.parse_type()
-        name = self.expect("IDENTIFIER").value
+        name_tok = self.expect("IDENTIFIER")
+        name = name_tok.value
 
         size = None
         if self.match("SYMBOL", "["):
@@ -253,7 +261,8 @@ class Parser:
             init = self.parse_expression()
 
         self.expect("SYMBOL", ";")
-        return VarDecl(vtype, name, is_const, size, init)
+        node = VarDecl(vtype, name, is_const, size, init)
+        return self._attach_loc(node, name_tok)
 
     def parse_statement(self):
         tok = self.current()
@@ -276,27 +285,30 @@ class Parser:
             if tok.value == "for":
                 return self.parse_for()
             if tok.value == "break":
+                break_tok = tok
                 self.advance()
                 self.expect("SYMBOL", ";")
-                return BreakStmt()
+                return self._attach_loc(BreakStmt(), break_tok)
             if tok.value == "continue":
+                cont_tok = tok
                 self.advance()
                 self.expect("SYMBOL", ";")
-                return ContinueStmt()
+                return self._attach_loc(ContinueStmt(), cont_tok)
             if tok.value == "return":
+                ret_tok = tok
                 self.advance()
                 expr = None
                 if not self.match("SYMBOL", ";"):
                     expr = self.parse_expression()
                     self.expect("SYMBOL", ";")
-                return ReturnStmt(expr)
+                return self._attach_loc(ReturnStmt(expr), ret_tok)
 
         expr = self.parse_expression()
         self.expect("SYMBOL", ";")
-        return ExprStmt(expr)
+        return self._attach_loc(ExprStmt(expr), tok)
 
     def parse_if(self):
-        self.expect("KEYWORD", "if")
+        if_tok = self.expect("KEYWORD", "if")
         self.expect("SYMBOL", "(")
         cond = self.parse_expression()
         self.expect("SYMBOL", ")")
@@ -306,18 +318,18 @@ class Parser:
         if self.match("KEYWORD", "else"):
             else_branch = self.parse_statement()
 
-        return IfStmt(cond, then_branch, else_branch)
+        return self._attach_loc(IfStmt(cond, then_branch, else_branch), if_tok)
 
     def parse_while(self):
-        self.expect("KEYWORD", "while")
+        wh_tok = self.expect("KEYWORD", "while")
         self.expect("SYMBOL", "(")
         cond = self.parse_expression()
         self.expect("SYMBOL", ")")
         body = self.parse_statement()
-        return WhileStmt(cond, body)
+        return self._attach_loc(WhileStmt(cond, body), wh_tok)
 
     def parse_for(self):
-        self.expect("KEYWORD", "for")
+        for_tok = self.expect("KEYWORD", "for")
         self.expect("SYMBOL", "(")
 
         init = None
@@ -336,7 +348,7 @@ class Parser:
         self.expect("SYMBOL", ")")
 
         body = self.parse_statement()
-        return ForStmt(init, cond, step, body)
+        return self._attach_loc(ForStmt(init, cond, step, body), for_tok)
 
 
     def parse_expression(self):
@@ -353,22 +365,27 @@ class Parser:
                     eq_tok,
                     "invalid left-hand side of assignment (expected variable or array element)",
                 )
-            return Assign(left, right)
+            node = Assign(left, right)
+            return self._attach_loc(node, eq_tok)
 
         return left
 
     def parse_or(self):
         left = self.parse_and()
         while self.match("SYMBOL", "||"):
+            op_tok = self.tokens[self.index - 1]
             right = self.parse_and()
-            left = BinaryOp("||", left, right)
+            node = BinaryOp("||", left, right)
+            left = self._attach_loc(node, op_tok)
         return left
 
     def parse_and(self):
         left = self.parse_equality()
         while self.match("SYMBOL", "&&"):
+            op_tok = self.tokens[self.index - 1]
             right = self.parse_equality()
-            left = BinaryOp("&&", left, right)
+            node = BinaryOp("&&", left, right)
+            left = self._attach_loc(node, op_tok)
         return left
 
     def parse_equality(self):
@@ -376,9 +393,11 @@ class Parser:
 
         while True:
             if self.match("SYMBOL", "==") or self.match("SYMBOL", "!="):
-                op = self.tokens[self.index - 1].value
+                op_tok = self.tokens[self.index - 1]
+                op = op_tok.value
                 right = self.parse_comparison()
-                left = BinaryOp(op, left, right)
+                node = BinaryOp(op, left, right)
+                left = self._attach_loc(node, op_tok)
             else:
                 break
 
@@ -394,9 +413,11 @@ class Parser:
                 or self.match("SYMBOL", "<=")
                 or self.match("SYMBOL", ">=")
             ):
-                op = self.tokens[self.index - 1].value
+                op_tok = self.tokens[self.index - 1]
+                op = op_tok.value
                 right = self.parse_additive()
-                left = BinaryOp(op, left, right)
+                node = BinaryOp(op, left, right)
+                left = self._attach_loc(node, op_tok)
             else:
                 break
 
@@ -406,9 +427,11 @@ class Parser:
         left = self.parse_term()
 
         while self.match("SYMBOL", "+") or self.match("SYMBOL", "-"):
-            op = self.tokens[self.index - 1].value
+            op_tok = self.tokens[self.index - 1]
+            op = op_tok.value
             right = self.parse_term()
-            left = BinaryOp(op, left, right)
+            node = BinaryOp(op, left, right)
+            left = self._attach_loc(node, op_tok)
 
         return left
 
@@ -416,9 +439,11 @@ class Parser:
         left = self.parse_unary()
 
         while self.match("SYMBOL", "*") or self.match("SYMBOL", "/") or self.match("SYMBOL", "%"):
-            op = self.tokens[self.index - 1].value
+            op_tok = self.tokens[self.index - 1]
+            op = op_tok.value
             right = self.parse_unary()
-            left = BinaryOp(op, left, right)
+            node = BinaryOp(op, left, right)
+            left = self._attach_loc(node, op_tok)
 
         return left
 
@@ -429,9 +454,10 @@ class Parser:
             or self.match("SYMBOL", "++")
             or self.match("SYMBOL", "--")
         ):
-            op = self.tokens[self.index - 1].value
+            op_tok = self.tokens[self.index - 1]
+            op = op_tok.value
             right = self.parse_unary()
-            return UnaryOp(op, right, postfix=False)
+            return self._attach_loc(UnaryOp(op, right, postfix=False), op_tok)
 
         return self.parse_postfix()
 
@@ -440,6 +466,7 @@ class Parser:
 
         while True:
             if self.match("SYMBOL", "("):
+                call_tok = self.tokens[self.index - 1]
                 args = []
                 if not self.match("SYMBOL", ")"):
                     while True:
@@ -447,14 +474,16 @@ class Parser:
                         if self.match("SYMBOL", ")"):
                             break
                         self.expect("SYMBOL", ",")
-                expr = Call(expr, args)
+                expr = self._attach_loc(Call(expr, args), call_tok)
             elif self.match("SYMBOL", "["):
+                lbr_tok = self.tokens[self.index - 1]
                 idx = self.parse_expression()
                 self.expect("SYMBOL", "]")
-                expr = ArrayAccess(expr, idx)
+                expr = self._attach_loc(ArrayAccess(expr, idx), lbr_tok)
             elif self.match("SYMBOL", "++") or self.match("SYMBOL", "--"):
-                op = self.tokens[self.index - 1].value
-                expr = UnaryOp(op, expr, postfix=True)
+                op_tok = self.tokens[self.index - 1]
+                op = op_tok.value
+                expr = self._attach_loc(UnaryOp(op, expr, postfix=True), op_tok)
             else:
                 break
 
@@ -467,27 +496,27 @@ class Parser:
 
         if tok.type == "NUMBER":
             self.advance()
-            return Literal("int", int(tok.value))
+            return self._attach_loc(Literal("int", int(tok.value)), tok)
 
         if tok.type == "FLOAT_LIT":
             self.advance()
-            return Literal("float", float(tok.value))
+            return self._attach_loc(Literal("float", float(tok.value)), tok)
 
         if tok.type == "BOOL_LIT":
             self.advance()
-            return Literal("bool", tok.value == "true")
+            return self._attach_loc(Literal("bool", tok.value == "true"), tok)
 
         if tok.type == "CHAR_LIT":
             self.advance()
-            return Literal("char", tok.value)
+            return self._attach_loc(Literal("char", tok.value), tok)
 
         if tok.type == "STRING_LIT":
             self.advance()
-            return Literal("string", tok.value)
+            return self._attach_loc(Literal("string", tok.value), tok)
 
         if tok.type == "IDENTIFIER":
             self.advance()
-            return Variable(tok.value)
+            return self._attach_loc(Variable(tok.value), tok)
 
         if self.match("SYMBOL", "("):
             expr = self.parse_expression()

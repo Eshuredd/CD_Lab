@@ -9,6 +9,7 @@ from type_checker import TypeChecker
 from ir import ast_to_ir, validate, IRValidationError
 from optimizer import constant_folding, dead_code_elimination, strength_reduction
 from viz import ast_to_dot, ir_linear_to_dot
+from backend import X86_64Backend, RiscVBackend
 
 
 def _write_output(target: Optional[str], contents: str) -> None:
@@ -77,6 +78,20 @@ def main(argv: Optional[list[str]] = None) -> None:
         "--no-optimize",
         action="store_true",
         help="Disable optimization passes (constant folding, strength reduction, dead-code elimination, etc.)",
+    )
+    cli.add_argument(
+        "--emit-asm",
+        metavar="FILE",
+        nargs="?",
+        const="-",
+        help="Emit assembly to FILE (or stdout if omitted). "
+             "Use --arch to select the target (default: riscv).",
+    )
+    cli.add_argument(
+        "--arch",
+        choices=["riscv", "x86_64"],
+        default="riscv",
+        help="Target architecture for --emit-asm (default: riscv).",
     )
 
     args = cli.parse_args(argv)
@@ -204,6 +219,15 @@ def main(argv: Optional[list[str]] = None) -> None:
     if args.dump_ir_after is not None:
         after_dot = ir_linear_to_dot(optimized_program)
         _write_output(args.dump_ir_after, after_dot)
+
+    if args.emit_asm is not None:
+        if args.arch == "x86_64":
+            asm_text = X86_64Backend(optimized_program).generate()
+        else:
+            asm_text = RiscVBackend(optimized_program).generate()
+        _write_output(args.emit_asm, asm_text)
+        if args.emit_asm and args.emit_asm != "-":
+            print(f"Assembly written to: {args.emit_asm}  (arch={args.arch})")
 
 
 if __name__ == "__main__":

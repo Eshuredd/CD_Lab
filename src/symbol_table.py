@@ -1,5 +1,21 @@
 class SemanticError(Exception):
-    pass
+    """
+    Raised for semantic/type-checking errors.
+
+    We optionally carry source location so the driver can print
+    something like:  (line X, col Y)
+    """
+
+    def __init__(self, message: str, line: int | None = None, column: int | None = None):
+        super().__init__(message)
+        self.line = line
+        self.column = column
+
+    def __str__(self) -> str:
+        msg = str(self.args[0]) if self.args else ""
+        if self.line is None:
+            return msg
+        return f"{msg} (line {self.line})"
 
 
 class Symbol:

@@ -1,17 +1,3 @@
-// strength_reduction.prog — Week 9 sample (strength reduction).
-//
-// Pipeline on the console: IR before opt → after constant folding →
-// after strength reduction → after dead code elimination.
-//
-// This program keeps MUL / DIV in the IR where one side is not constant
-// (LOAD i), so after constant folding the strength pass can still replace:
-//   i * 8   → doubling ADDs
-//   i / 1   → ADD with zero (identity division)
-//
-//   cd src
-//   python main.py samples/strength_reduction.prog
-//
-// Optional DOT after SR only:
 //   python main.py samples/strength_reduction.prog --dump-ir-after-sr ir_sr.dot
 
 int main() {
