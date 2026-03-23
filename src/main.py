@@ -45,7 +45,6 @@ def main(argv: Optional[list[str]] = None) -> None:
         const="-",
         help="Emit linear IR graph as Graphviz DOT",
     )
-    # Forward-looking flags for pre/post optimization IR snapshots.
     cli.add_argument(
         "--dump-ir-before",
         metavar="FILE",
@@ -168,9 +167,6 @@ def main(argv: Optional[list[str]] = None) -> None:
         before_dot = ir_linear_to_dot(ir_program)
         _write_output(args.dump_ir_before, before_dot)
 
-    # ------------------------------------------------------------------
-    # Optimization passes
-    # ------------------------------------------------------------------
     optimized_program = ir_program
     if not args.no_optimize:
         cf_result = constant_folding(ir_program)

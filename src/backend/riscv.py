@@ -43,7 +43,6 @@ class RiscVBackend:
         self.scnt   = 0
         self.fn     = ""          # current function name (for label prefixing)
 
-    # ── helpers ────────────────────────────────────────────────────────────────
 
     def _intern(self, val: str) -> str:
         if val not in self.strs:
@@ -55,7 +54,6 @@ class RiscVBackend:
     def i(self, s):               self.out.append("    " + s)
     def lbl(self, name):          return f".L{self.fn}_{name}"
 
-    # ── frame planning ─────────────────────────────────────────────────────────
 
     def _build_frame(self, func: IRFunction):
         """Returns (slots, array_bases, frame_size).
@@ -91,8 +89,6 @@ class RiscVBackend:
 
     def ref(self, slots, name):
         return f"-{slots[name] + 16}(s0)"
-
-    # ── code generation ────────────────────────────────────────────────────────
 
     def generate(self) -> str:
         # collect all string literals up front
