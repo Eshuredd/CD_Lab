@@ -9,7 +9,7 @@ from type_checker import TypeChecker
 from ir import ast_to_ir, validate, IRValidationError
 from optimizer import constant_folding, dead_code_elimination, strength_reduction
 from viz import ast_to_dot, ir_linear_to_dot
-from backend import X86_64Backend, RiscVBackend
+from backend import RiscVBackend
 
 
 def _write_output(target: Optional[str], contents: str) -> None:
@@ -222,6 +222,9 @@ def main(argv: Optional[list[str]] = None) -> None:
 
     if args.emit_asm is not None:
         if args.arch == "x86_64":
+            # Lazy import: only load x86 backend when requested.
+            from backend.x86_64 import X86_64Backend
+
             asm_text = X86_64Backend(optimized_program).generate()
         else:
             asm_text = RiscVBackend(optimized_program).generate()
