@@ -218,8 +218,7 @@ def main(argv: Optional[list[str]] = None) -> None:
 
     if args.emit_asm is not None:
         if args.arch == "x86_64":
-            # Lazy import: only load x86 backend when requested.
-            from backend.x86_64 import X86_64Backend
+            from backend import X86_64Backend
 
             asm_text = X86_64Backend(optimized_program).generate()
         else:
