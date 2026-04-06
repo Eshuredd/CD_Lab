@@ -1,0 +1,12 @@
+// backend_minimal.prog
+// Tiny program for quick --arch riscv / x86_64 checks (short assembly vs backend_dual_backend_smoke.prog).
+//
+// Example:
+//   python main.py samples/backend_minimal.prog --emit-asm out.asm --arch x86_64 --no-optimize
+
+int main() {
+    int n;
+    n = 14;
+    print(n);
+    return 0;
+}

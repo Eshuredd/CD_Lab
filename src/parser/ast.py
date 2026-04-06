@@ -75,7 +75,6 @@ class FunctionDecl(ASTNode):
         self.params = params
         self.body = body
 
-
 class Param(ASTNode):
     def __init__(self, param_type, name):
         self.param_type = param_type

@@ -10,5 +10,6 @@ int main() {
     int result;
     x = 5;
     result = factorial(x);
+    print(result);
     return result;
 }

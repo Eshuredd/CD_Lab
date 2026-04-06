@@ -7,7 +7,10 @@ from parser.parser import Parser
 from symbol_table import SemanticError
 from type_checker import TypeChecker
 from ir import ast_to_ir, validate, IRValidationError
-from optimizer import constant_folding, dead_code_elimination, strength_reduction
+from optimizer import (
+    constant_folding, dead_code_elimination, strength_reduction,
+    cse, copy_propagation,
+)
 from viz import ast_to_dot, ir_linear_to_dot
 from backend import RiscVBackend
 
@@ -67,11 +70,25 @@ def main(argv: Optional[list[str]] = None) -> None:
         help="Emit IR after strength reduction (Graphviz DOT)",
     )
     cli.add_argument(
+        "--dump-ir-after-cse",
+        metavar="FILE",
+        nargs="?",
+        const="-",
+        help="Emit IR after CSE pass (Graphviz DOT)",
+    )
+    cli.add_argument(
+        "--dump-ir-after-cp",
+        metavar="FILE",
+        nargs="?",
+        const="-",
+        help="Emit IR after copy propagation pass (Graphviz DOT)",
+    )
+    cli.add_argument(
         "--dump-ir-after",
         metavar="FILE",
         nargs="?",
         const="-",
-        help="Emit fully optimized IR (CF + strength reduction + DCE) as Graphviz DOT",
+        help="Emit fully optimized IR (CF + SR + DCE + CSE + CP) as Graphviz DOT",
     )
     cli.add_argument(
         "--no-optimize",
@@ -90,10 +107,18 @@ def main(argv: Optional[list[str]] = None) -> None:
         "--arch",
         choices=["riscv", "x86_64"],
         default="riscv",
-        help="Target architecture for --emit-asm (default: riscv).",
+        help="Target for --emit-asm (default: riscv).",
+    )
+    cli.add_argument(
+        "--emit-cpp",
+        metavar="FILE",
+        nargs="?",
+        const="-",
+        help="Emit portable C++ (from IR); compile manually with g++/clang++.",
     )
 
     args = cli.parse_args(argv)
+    log = print
 
     with open(args.source, encoding="utf-8") as f:
         code = f.read()
@@ -101,11 +126,11 @@ def main(argv: Optional[list[str]] = None) -> None:
     lexer = Lexer(code)
     tokens = lexer.tokenize()
 
-    print("TOKENS:")
+    log("TOKENS:")
     for t in tokens:
-        print(t)
+        log(t)
 
-    print("-" * 80)
+    log("-" * 80)
 
     errors = []
     parser = Parser(tokens, source_path=str(Path(args.source)))
@@ -114,9 +139,9 @@ def main(argv: Optional[list[str]] = None) -> None:
         errors.append(("syntax", msg))
 
     if ast is not None:
-        print("\nAST:")
-        print(ast)
-        print("-" * 80)
+        log("\nAST:")
+        log(ast)
+        log("-" * 80)
 
         # Optional AST DOT dump.
         if args.dump_ast_dot is not None:
@@ -131,8 +156,8 @@ def main(argv: Optional[list[str]] = None) -> None:
         except SemanticError as e:
             errors.append(("semantic", str(e)))
         if semantic_ok:
-            print("Semantic analysis OK")
-            print("-" * 80)
+            log("Semantic analysis OK")
+            log("-" * 80)
 
     if errors:
         print("\nErrors:")
@@ -153,10 +178,10 @@ def main(argv: Optional[list[str]] = None) -> None:
             + f": {e}"
         )
         return
-    print("IR validation OK")
-    print("\nIR (before optimization):")
-    print(ir_program)
-    print("-" * 80)
+    log("IR validation OK")
+    log("\nIR (before optimization):")
+    log(ir_program)
+    log("-" * 80)
 
     # IR visualization (unoptimized snapshot).
     if args.dump_ir_dot is not None:
@@ -171,33 +196,67 @@ def main(argv: Optional[list[str]] = None) -> None:
     if not args.no_optimize:
         cf_result = constant_folding(ir_program)
         after_cf_program = cf_result.program
-        print(cf_result.summary())
-        print("-" * 80)
-        print("\nIR (after constant folding):")
-        print(after_cf_program)
-        print("-" * 80)
+        log(cf_result.summary())
+        log("-" * 80)
+        log("\nIR (after constant folding):")
+        log(after_cf_program)
+        log("-" * 80)
 
         if args.dump_ir_after_cf is not None:
             _write_output(args.dump_ir_after_cf, ir_linear_to_dot(after_cf_program))
 
         sr_result = strength_reduction(after_cf_program)
         after_sr_program = sr_result.program
-        print(sr_result.summary())
-        print("-" * 80)
-        print("\nIR (after strength reduction):")
-        print(after_sr_program)
-        print("-" * 80)
+        log(sr_result.summary())
+        log("-" * 80)
+        log("\nIR (after strength reduction):")
+        log(after_sr_program)
+        log("-" * 80)
 
         if args.dump_ir_after_sr is not None:
             _write_output(args.dump_ir_after_sr, ir_linear_to_dot(after_sr_program))
 
         dce_result = dead_code_elimination(after_sr_program)
-        optimized_program = dce_result.program
-        print(dce_result.summary())
-        print("-" * 80)
+        after_dce_program = dce_result.program
+        log(dce_result.summary())
+        log("-" * 80)
+        log("\nIR (after dead code elimination):")
+        log(after_dce_program)
+        log("-" * 80)
+
+        cse_result = cse(after_dce_program)
+        after_cse_program = cse_result.program
+        log(cse_result.summary())
+        log("-" * 80)
+        log("\nIR (after CSE):")
+        log(after_cse_program)
+        log("-" * 80)
+
+        if args.dump_ir_after_cse is not None:
+            _write_output(args.dump_ir_after_cse, ir_linear_to_dot(after_cse_program))
+
+        cp_result = copy_propagation(after_cse_program)
+        optimized_program = cp_result.program
+        log(cp_result.summary())
+        log("-" * 80)
+        log("\nIR (after copy propagation):")
+        log(optimized_program)
+        log("-" * 80)
+
+        if args.dump_ir_after_cp is not None:
+            _write_output(args.dump_ir_after_cp, ir_linear_to_dot(optimized_program))
+
+        # Final DCE sweep to clean up any temps made redundant by CSE / CP
+        dce2 = dead_code_elimination(optimized_program)
+        optimized_program = dce2.program
+        if dce2.total_removed:
+            log(f"Post-CP DCE: removed {dce2.total_removed} more instruction(s)")
+            log(optimized_program)
+            log("-" * 80)
+
         try:
             validate(optimized_program)
-            print("IR validation OK (after optimizations)")
+            log("IR validation OK (after all optimizations)")
         except IRValidationError as e:
             print(
                 f"IR validation error after optimization in {e.function_name or 'program'}"
@@ -205,27 +264,41 @@ def main(argv: Optional[list[str]] = None) -> None:
                 + f": {e}"
             )
             return
-        print("-" * 80)
-        print("\nIR (after dead code elimination):")
-        print(optimized_program)
-        print("-" * 80)
     else:
-        print("Optimizations skipped (--no-optimize).")
+        log("Optimizations skipped (--no-optimize).")
 
     if args.dump_ir_after is not None:
         after_dot = ir_linear_to_dot(optimized_program)
         _write_output(args.dump_ir_after, after_dot)
 
-    if args.emit_asm is not None:
+    need_asm = args.emit_asm is not None
+    asm_text: Optional[str] = None
+    if need_asm:
         if args.arch == "x86_64":
             from backend import X86_64Backend
 
             asm_text = X86_64Backend(optimized_program).generate()
         else:
             asm_text = RiscVBackend(optimized_program).generate()
+
+    need_cpp = args.emit_cpp is not None
+    cpp_text: Optional[str] = None
+    if need_cpp:
+        from backend.cpp_transpile import CppTranspileBackend
+
+        cpp_text = CppTranspileBackend(optimized_program).generate()
+
+    if args.emit_asm is not None:
+        assert asm_text is not None
         _write_output(args.emit_asm, asm_text)
-        if args.emit_asm and args.emit_asm != "-":
+        if args.emit_asm != "-":
             print(f"Assembly written to: {args.emit_asm}  (arch={args.arch})")
+
+    if args.emit_cpp is not None:
+        assert cpp_text is not None
+        _write_output(args.emit_cpp, cpp_text)
+        if args.emit_cpp != "-":
+            print(f"C++ written to: {args.emit_cpp}")
 
 
 if __name__ == "__main__":

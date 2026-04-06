@@ -1,4 +1,4 @@
-"""IR → assembly (default RISC-V; x86-64 via main --arch)."""
+"""IR → assembly (RISC-V / x86-64) or C++ via ``backend.cpp_transpile`` / ``main --emit-cpp``."""
 
 from .riscv import RiscVBackend
 

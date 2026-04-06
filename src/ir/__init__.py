@@ -12,9 +12,13 @@ __all__ = [
 from optimizer.constant_folding import constant_folding, ConstantFoldingResult  # noqa: E402
 from optimizer.dead_code_elimination import dead_code_elimination, DeadCodeEliminationResult  # noqa: E402
 from optimizer.strength_reduction import strength_reduction, StrengthReductionResult  # noqa: E402
+from optimizer.cse import cse, CSEResult  # noqa: E402
+from optimizer.copy_propagation import copy_propagation, CopyPropagationResult  # noqa: E402
 
 __all__ += [
     "constant_folding", "ConstantFoldingResult",
     "dead_code_elimination", "DeadCodeEliminationResult",
     "strength_reduction", "StrengthReductionResult",
+    "cse", "CSEResult",
+    "copy_propagation", "CopyPropagationResult",
 ]
