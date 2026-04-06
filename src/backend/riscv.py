@@ -28,6 +28,36 @@ class RiscVBackend:
         self.strs: Dict[str, str] = {}
         self.scnt = 0
         self.fn = ""
+        self._t0: str | None = None
+        self._t1: str | None = None
+
+    def _ld_t0(self, addr: str) -> None:
+        """Emit 'ld t0, addr' only when t0 does not already hold that slot."""
+        if self._t0 == addr:
+            return
+        self.i(f"ld    t0, {addr}")
+        self._t0 = addr
+
+    def _sd_t0(self, addr: str) -> None:
+        """Emit 'sd t0, addr' and record that t0 == mem[addr]."""
+        self.i(f"sd    t0, {addr}")
+        self._t0 = addr
+
+    def _ld_t1(self, addr: str) -> None:
+        """Emit 'ld t1, addr' only when t1 does not already hold that slot."""
+        if self._t1 == addr:
+            return
+        self.i(f"ld    t1, {addr}")
+        self._t1 = addr
+
+    def _kill_t0(self) -> None:
+        self._t0 = None
+
+    def _kill_t1(self) -> None:
+        self._t1 = None
+
+    def _kill_tmps(self) -> None:
+        self._t0 = self._t1 = None
 
     def _intern(self, val: str) -> str:
         if val not in self.strs:
@@ -79,6 +109,10 @@ class RiscVBackend:
                     self._intern(ins.args[1][1])
 
         self.e()
+        self.e("    .extern printf")
+        self.e("    .extern scanf")
+        self.e("    .extern exit")
+        self.e()
         self.e("    .section .data")
         self.e('_fmt_int:  .string "%ld\\n"')
         self.e('_fmt_uint: .string "%lu\\n"')
@@ -99,6 +133,7 @@ class RiscVBackend:
     def _gen_func(self, func: IRFunction) -> None:
         slots, arrs, N = self._build_frame(func)
         self.fn = func.name
+        self._kill_tmps()
         r = lambda name: self.ref(slots, name)
 
         self.e(f"{func.name}:")
@@ -113,7 +148,7 @@ class RiscVBackend:
                 self.i(f"sd    {_AREG[idx]}, {r(p)}")
             else:
                 self.i(f"ld    t0, {8 + (idx-8)*8}(s0)")
-                self.i(f"sd    t0, {r(p)}")
+                self._sd_t0(r(p))
 
         kinds: Dict[str, str] = {p: "int" for p in func.param_names}
         pend: List[str] = []
@@ -125,13 +160,14 @@ class RiscVBackend:
                 pass
             elif op == "LABEL":
                 self.e(f"{self.lbl(a[0])}:")
+                self._kill_tmps()
             elif op == "JMP":
                 self.i(f"j     {self.lbl(a[0])}")
             elif op == "JMP_IF":
-                self.i(f"ld    t0, {r(a[0])}")
+                self._ld_t0(r(a[0]))
                 self.i(f"bnez  t0, {self.lbl(a[1])}")
             elif op == "JMP_IF_NOT":
-                self.i(f"ld    t0, {r(a[0])}")
+                self._ld_t0(r(a[0]))
                 self.i(f"beqz  t0, {self.lbl(a[1])}")
 
             elif op == "CONST":
@@ -139,40 +175,47 @@ class RiscVBackend:
                 kinds[dest] = kind
                 if kind in ("int", "uint32", "bool"):
                     self.i(f"li    t0, {int(val)}")
-                    self.i(f"sd    t0, {r(dest)}")
+                    self._kill_t0()
+                    self._sd_t0(r(dest))
                 elif kind == "char":
                     self.i(f"li    t0, {int(val) if isinstance(val, int) else ord(val)}")
-                    self.i(f"sd    t0, {r(dest)}")
+                    self._kill_t0()
+                    self._sd_t0(r(dest))
                 elif kind == "float":
                     self.i("# float -> 0")
                     self.i(f"sd    zero, {r(dest)}")
                 elif kind == "string":
                     self.i(f"la    t0, {self._intern(val)}")
-                    self.i(f"sd    t0, {r(dest)}")
+                    self._kill_t0()
+                    self._sd_t0(r(dest))
 
             elif op == "LOAD":
                 kinds[a[0]] = kinds.get(a[1], "int")
-                self.i(f"ld    t0, {r(a[1])}")
-                self.i(f"sd    t0, {r(a[0])}")
+                self._ld_t0(r(a[1]))
+                self._sd_t0(r(a[0]))
             elif op == "STORE":
                 kinds[a[0]] = kinds.get(a[1], "int")
-                self.i(f"ld    t0, {r(a[1])}")
-                self.i(f"sd    t0, {r(a[0])}")
+                self._ld_t0(r(a[1]))
+                self._sd_t0(r(a[0]))
             elif op == "ALLOC_ARRAY":
                 pass
             elif op == "LOAD_ARR":
                 dest, arr, idx = a
-                self.i(f"ld    t1, {r(idx)}")
+                self._ld_t1(r(idx))
                 self.i("slli  t1, t1, 3")
+                self._kill_t1()
                 self.i(f"addi  t0, s0, -{arrs[arr]+16}")
+                self._kill_t0()
                 self.i("sub   t0, t0, t1")
                 self.i("ld    t0, 0(t0)")
-                self.i(f"sd    t0, {r(dest)}")
+                self._sd_t0(r(dest))
             elif op == "STORE_ARR":
                 arr, idx, src = a
-                self.i(f"ld    t1, {r(idx)}")
+                self._ld_t1(r(idx))
                 self.i("slli  t1, t1, 3")
+                self._kill_t1()
                 self.i(f"addi  t0, s0, -{arrs[arr]+16}")
+                self._kill_t0()
                 self.i("sub   t0, t0, t1")
                 self.i(f"ld    t2, {r(src)}")
                 self.i("sd    t2, 0(t0)")
@@ -180,57 +223,71 @@ class RiscVBackend:
             elif op in _BINOP:
                 dest, l, rv = a
                 kinds[dest] = kinds.get(l, "int")
-                self.i(f"ld    t0, {r(l)}")
-                self.i(f"ld    t1, {r(rv)}")
+                self._ld_t0(r(l))
+                self._ld_t1(r(rv))
                 self.i(f"{_BINOP[op]:<5} t0, t0, t1")
-                self.i(f"sd    t0, {r(dest)}")
+                self._kill_t0()
+                self._kill_t1()
+                self._sd_t0(r(dest))
             elif op == "NEG":
                 kinds[a[0]] = kinds.get(a[1], "int")
-                self.i(f"ld    t0, {r(a[1])}")
+                self._ld_t0(r(a[1]))
                 self.i("neg   t0, t0")
-                self.i(f"sd    t0, {r(a[0])}")
+                self._kill_t0()
+                self._sd_t0(r(a[0]))
             elif op == "INC":
                 kinds[a[0]] = kinds.get(a[1], "int")
-                self.i(f"ld    t0, {r(a[1])}")
+                self._ld_t0(r(a[1]))
                 self.i("addi  t0, t0, 1")
-                self.i(f"sd    t0, {r(a[0])}")
+                self._kill_t0()
+                self._sd_t0(r(a[0]))
             elif op == "DEC":
                 kinds[a[0]] = kinds.get(a[1], "int")
-                self.i(f"ld    t0, {r(a[1])}")
+                self._ld_t0(r(a[1]))
                 self.i("addi  t0, t0, -1")
-                self.i(f"sd    t0, {r(a[0])}")
+                self._kill_t0()
+                self._sd_t0(r(a[0]))
 
             elif op in _CMP:
                 dest, l, rv = a
                 kinds[dest] = "bool"
-                self.i(f"ld    t0, {r(l)}")
-                self.i(f"ld    t1, {r(rv)}")
+                self._ld_t0(r(l))
+                self._ld_t1(r(rv))
                 for line in _CMP[op]:
                     self.i(line)
-                self.i(f"sd    t0, {r(dest)}")
+                self._kill_t0()
+                self._kill_t1()
+                self._sd_t0(r(dest))
             elif op == "AND":
                 dest, l, rv = a
                 kinds[dest] = "bool"
-                self.i(f"ld    t0, {r(l)}")
+                self._ld_t0(r(l))
                 self.i("sltu  t0, zero, t0")
-                self.i(f"ld    t1, {r(rv)}")
+                self._kill_t0()
+                self._ld_t1(r(rv))
                 self.i("sltu  t1, zero, t1")
+                self._kill_t1()
                 self.i("and   t0, t0, t1")
-                self.i(f"sd    t0, {r(dest)}")
+                self._kill_t0()
+                self._sd_t0(r(dest))
             elif op == "OR":
                 dest, l, rv = a
                 kinds[dest] = "bool"
-                self.i(f"ld    t0, {r(l)}")
+                self._ld_t0(r(l))
                 self.i("sltu  t0, zero, t0")
-                self.i(f"ld    t1, {r(rv)}")
+                self._kill_t0()
+                self._ld_t1(r(rv))
                 self.i("sltu  t1, zero, t1")
+                self._kill_t1()
                 self.i("or    t0, t0, t1")
-                self.i(f"sd    t0, {r(dest)}")
+                self._kill_t0()
+                self._sd_t0(r(dest))
             elif op == "NOT":
                 kinds[a[0]] = "bool"
-                self.i(f"ld    t0, {r(a[1])}")
+                self._ld_t0(r(a[1]))
                 self.i("sltiu t0, t0, 1")
-                self.i(f"sd    t0, {r(a[0])}")
+                self._kill_t0()
+                self._sd_t0(r(a[0]))
 
             elif op == "PRINT":
                 fmts = {"string": "_fmt_str", "char": "_fmt_char", "uint32": "_fmt_uint"}
@@ -238,14 +295,17 @@ class RiscVBackend:
                     self.i(f"la    a0, {fmts.get(kinds.get(arg, 'int'), '_fmt_int')}")
                     self.i(f"ld    a1, {r(arg)}")
                     self.i("call  printf")
+                self._kill_tmps()
             elif op == "READ_INT":
                 kinds[a[0]] = "int"
                 self.i("la    a0, _fmt_scan")
                 self.i(f"addi  a1, s0, -{slots[a[0]]+16}")
                 self.i("call  scanf")
+                self._kill_tmps()
             elif op == "EXIT":
                 self.i(f"ld    a0, {r(a[0])}")
                 self.i("call  exit")
+                self._kill_tmps()
             elif op == "PARAM":
                 pend.append(a[0])
             elif op == "CALL":
@@ -255,7 +315,7 @@ class RiscVBackend:
                 if eb:
                     self.i(f"addi  sp, sp, -{eb}")
                     for j, p in enumerate(pend[8:]):
-                        self.i(f"ld    t0, {r(p)}")
+                        self._ld_t0(r(p))
                         self.i(f"sd    t0, {j*8}(sp)")
                 for j, p in enumerate(pend[:8]):
                     self.i(f"ld    {_AREG[j]}, {r(p)}")
@@ -265,6 +325,7 @@ class RiscVBackend:
                 if dest_r:
                     kinds[dest_r] = "int"
                     self.i(f"sd    a0, {r(dest_r)}")
+                self._kill_tmps()
                 pend.clear()
             elif op == "RET":
                 if a[0]:
