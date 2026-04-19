@@ -1,4 +1,11 @@
-"""x86-64 NASM (Linux System V). rdi–r9 args; rax ret; locals under rbp."""
+"""x86-64 NASM backend for bare ``nasm`` + ``ld`` (typical online assemblers).
+
+Uses ``global _start``, Linux syscalls only (``sys_read``, ``sys_write``,
+``sys_exit``) — no libc. Entry is ``_start`` → ``call main`` → ``syscall`` exit.
+Locals: ``qword [rbp - N]``; args per SysV (rdi…r9). Emits only the runtime
+helpers that IR actually uses (``_print_int``, ``_print_str``, ``_print_char``,
+``_read_int``).
+"""
 
 from __future__ import annotations
 
@@ -13,7 +20,6 @@ _DEF = frozenset({
     "CONST", "LOAD", "LOAD_ARR", "READ_INT", "ADD", "SUB", "MUL", "DIV", "MOD",
     "NEG", "INC", "DEC", "LT", "LE", "GT", "GE", "EQ", "NE", "AND", "OR", "NOT",
 })
-_PRINT_FMT = {"string": "_fmt_str", "char": "_fmt_char", "uint32": "_fmt_uint"}
 
 
 def _nasm_string(val: str) -> str:
@@ -42,12 +48,153 @@ def _nasm_string(val: str) -> str:
     return ", ".join(parts) if parts else '""'
 
 
+_RUNTIME = r"""
+_print_int:
+    push rbp
+    mov rbp, rsp
+    push rbx
+    mov rax, rdi
+    lea rdi, [rel _iobuf + 31]
+    mov byte [rdi], 10
+    mov rbx, 0
+    test rax, rax
+    jns .pi_pos
+    neg rax
+    mov rbx, 1
+.pi_pos:
+    mov rcx, 10
+.pi_loop:
+    dec rdi
+    xor rdx, rdx
+    div rcx
+    add dl, '0'
+    mov [rdi], dl
+    test rax, rax
+    jnz .pi_loop
+    test rbx, rbx
+    jz .pi_nosign
+    dec rdi
+    mov byte [rdi], '-'
+.pi_nosign:
+    lea rax, [rel _iobuf + 32]
+    mov rdx, rax
+    sub rdx, rdi
+    mov rsi, rdi
+    mov rdi, 1
+    mov rax, 1
+    syscall
+    pop rbx
+    pop rbp
+    ret
+
+_print_str:
+    push rbp
+    mov rbp, rsp
+    push rbx
+    mov rbx, rdi
+    xor rcx, rcx
+.ps_len:
+    cmp byte [rbx + rcx], 0
+    je  .ps_write
+    inc rcx
+    jmp .ps_len
+.ps_write:
+    mov rdx, rcx
+    mov rsi, rbx
+    mov rdi, 1
+    mov rax, 1
+    syscall
+    mov byte [rel _iobuf], 10
+    mov rdx, 1
+    lea rsi, [rel _iobuf]
+    mov rdi, 1
+    mov rax, 1
+    syscall
+    pop rbx
+    pop rbp
+    ret
+
+_print_char:
+    push rbp
+    mov rbp, rsp
+    mov [rel _iobuf], dil
+    mov byte [rel _iobuf + 1], 10
+    mov rdx, 2
+    lea rsi, [rel _iobuf]
+    mov rdi, 1
+    mov rax, 1
+    syscall
+    pop rbp
+    ret
+
+_read_int:
+    push rbp
+    mov rbp, rsp
+    mov rax, 0
+    mov rdi, 0
+    lea rsi, [rel _inbuf]
+    mov rdx, 63
+    syscall
+    mov rcx, rax
+    lea rdi, [rel _inbuf]
+    xor rax, rax
+    xor r8, r8
+    test rcx, rcx
+    jle .ri_done
+.ri_skip:
+    cmp rcx, 0
+    jle .ri_done
+    mov dl, [rdi]
+    cmp dl, ' '
+    je  .ri_adv
+    cmp dl, 9
+    je  .ri_adv
+    cmp dl, 10
+    je  .ri_adv
+    cmp dl, 13
+    je  .ri_adv
+    jmp .ri_sign
+.ri_adv:
+    inc rdi
+    dec rcx
+    jmp .ri_skip
+.ri_sign:
+    cmp byte [rdi], '-'
+    jne .ri_digits
+    mov r8, 1
+    inc rdi
+    dec rcx
+.ri_digits:
+    cmp rcx, 0
+    jle .ri_end
+    movzx rdx, byte [rdi]
+    cmp dl, '0'
+    jb  .ri_end
+    cmp dl, '9'
+    ja  .ri_end
+    sub dl, '0'
+    imul rax, rax, 10
+    add rax, rdx
+    inc rdi
+    dec rcx
+    jmp .ri_digits
+.ri_end:
+    test r8, r8
+    jz  .ri_done
+    neg rax
+.ri_done:
+    pop rbp
+    ret
+"""
+
+
 class X86_64Backend:
     def __init__(self, program: IRProgram) -> None:
         self._prog = program
         self._pool: Dict[str, str] = {}
         self._sc = 0
         self._buf = io.StringIO()
+        self._used: set[str] = set()  # which runtime helpers are referenced
 
     def _lbl(self, v: str) -> str:
         for lbl, s in self._pool.items():
@@ -97,25 +244,53 @@ class X86_64Backend:
                 if ins.op == "CONST" and isinstance(ins.args[1], tuple) and ins.args[1][0] == "string":
                     self._lbl(ins.args[1][1])
 
-        self._ln("    extern printf")
-        self._ln("    extern scanf")
-        self._ln("    extern exit")
-        self._ln()
-        self._ln("section .data")
-        self._ln('    _fmt_int    db "%ld", 10, 0')
-        self._ln('    _fmt_uint   db "%lu", 10, 0')
-        self._ln('    _fmt_char   db "%c", 10, 0')
-        self._ln('    _fmt_str    db "%s", 10, 0')
-        self._ln('    _fmt_scan   db "%ld", 0')
-        for lbl, val in self._pool.items():
-            self._ln(f"    {lbl:<14} db {_nasm_string(val)}, 0")
-        self._ln()
-        self._ln("section .text")
-        if any(f.name == "main" for f in self._prog.functions):
-            self._ln("    global main")
-        self._ln()
+        # Generate function bodies first into a side buffer so we know which
+        # runtime helpers were touched and can omit unused ones.
+        body_buf = io.StringIO()
+        main_buf = self._buf
+        self._buf = body_buf
         for fn in self._prog.functions:
             self._gen_fn(fn, *self._build_frame(fn))
+        self._buf = main_buf
+
+        # ---- header / data / bss ----
+        if self._pool:
+            self._ln("section .data")
+            for lbl, val in self._pool.items():
+                self._ln(f"    {lbl:<14} db {_nasm_string(val)}, 0")
+            self._ln()
+
+        if self._used:
+            self._ln("section .bss")
+            if {"_print_int", "_print_str", "_print_char"} & self._used:
+                self._ln("    _iobuf      resb 64")
+            if "_read_int" in self._used:
+                self._ln("    _inbuf      resb 64")
+            self._ln()
+
+        self._ln("section .text")
+        has_main = any(f.name == "main" for f in self._prog.functions)
+        if has_main:
+            self._ln("    global _start")
+        self._ln()
+
+        # ---- _start trampoline: call main, then sys_exit with rax ----
+        if has_main:
+            self._ln("_start:")
+            self._i("call main")
+            self._i("mov rdi, rax")
+            self._i("mov rax, 60")
+            self._i("syscall")
+            self._ln()
+
+        # ---- emit only the runtime helpers we actually need ----
+        for helper, block in _split_runtime(_RUNTIME).items():
+            if helper in self._used:
+                self._buf.write(block)
+                self._ln()
+
+        # ---- user function bodies ----
+        self._buf.write(body_buf.getvalue())
         return self._buf.getvalue()
 
     def _gen_fn(self, func: IRFunction, slot: Dict[str, int], ab: Dict[str, int], fs: int) -> None:
@@ -330,22 +505,30 @@ class X86_64Backend:
 
         if op == "PRINT":
             for arg in a:
-                fmt = _PRINT_FMT.get(kinds.get(arg, "int"), "_fmt_int")
-                self._i(f"lea rdi, [rel {fmt}]")
-                self._i(f"mov rsi, {r(arg)}")
-                self._i("xor eax, eax")
-                self._i("call printf")
+                k = kinds.get(arg, "int")
+                if k == "string":
+                    self._used.add("_print_str")
+                    self._i(f"mov rdi, {r(arg)}")
+                    self._i("call _print_str")
+                elif k == "char":
+                    self._used.add("_print_char")
+                    self._i(f"mov rdi, {r(arg)}")
+                    self._i("call _print_char")
+                else:
+                    self._used.add("_print_int")
+                    self._i(f"mov rdi, {r(arg)}")
+                    self._i("call _print_int")
             return
         if op == "READ_INT":
             kinds[a[0]] = "int"
-            self._i("lea rdi, [rel _fmt_scan]")
-            self._i(f"lea rsi, [rbp - {slot[a[0]]}]")
-            self._i("xor eax, eax")
-            self._i("call scanf")
+            self._used.add("_read_int")
+            self._i("call _read_int")
+            self._i(f"mov {r(a[0])}, rax")
             return
         if op == "EXIT":
             self._i(f"mov rdi, {r(a[0])}")
-            self._i("call exit")
+            self._i("mov rax, 60")
+            self._i("syscall")
             return
         if op == "PARAM":
             pend.append(a[0])
@@ -382,3 +565,53 @@ class X86_64Backend:
             return
 
         self._i(f"; TODO: {op} {a}")
+
+
+def _split_runtime(src: str) -> Dict[str, str]:
+    """Split _RUNTIME blob into a {label: text} map keyed by helper name.
+
+    The leading docstring comment that precedes each helper is attached to
+    *that* helper, and trailing blank / comment lines are stripped so a block
+    never bleeds into the next helper's documentation.
+    """
+    out: Dict[str, str] = {}
+    cur_name: str | None = None
+    cur_lines: List[str] = []
+    pending_comments: List[str] = []
+
+    def is_helper_label(line: str) -> bool:
+        s = line.lstrip()
+        return (
+            line.startswith("_")
+            and s.endswith(":\n")
+            and " " not in s[:-2]
+            and "\t" not in s[:-2]
+        )
+
+    for line in src.splitlines(keepends=True):
+        stripped_no_nl = line.rstrip("\n")
+        is_blank = stripped_no_nl.strip() == ""
+        is_comment = stripped_no_nl.lstrip().startswith(";")
+
+        if is_helper_label(line):
+            if cur_name is not None:
+                out[cur_name] = "".join(cur_lines).rstrip() + "\n"
+            cur_lines = pending_comments + [line]
+            cur_name = line.lstrip()[:-2]
+            pending_comments = []
+        elif cur_name is None:
+            # Header comments / blanks before first helper float forward.
+            if is_comment or is_blank:
+                pending_comments.append(line)
+        else:
+            if is_comment or is_blank:
+                pending_comments.append(line)
+            else:
+                if pending_comments:
+                    cur_lines.extend(pending_comments)
+                    pending_comments = []
+                cur_lines.append(line)
+
+    if cur_name is not None:
+        out[cur_name] = "".join(cur_lines).rstrip() + "\n"
+    return out

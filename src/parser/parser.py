@@ -18,6 +18,8 @@ from .ast import (
     Variable,
     ArrayAccess,
     Call,
+    SwitchStmt,
+    CaseClause,
 )
 
 
@@ -116,7 +118,7 @@ class Parser:
             if tok.type == "SYMBOL" and tok.value == ";":
                 self.advance()
                 return
-            if tok.type == "KEYWORD" and tok.value in ("if", "while", "for", "return", "break", "continue"):
+            if tok.type == "KEYWORD" and tok.value in ("if", "while", "for", "return", "break", "continue", "switch"):
                 return
             self.advance()
 
@@ -189,8 +191,8 @@ class Parser:
         if not self.match("SYMBOL", ")"):
             while True:
                 ptype = self.parse_type()
-                pname = self.expect("IDENTIFIER").value
-                params.append(Param(ptype, pname))
+                pname_tok = self.expect("IDENTIFIER")
+                params.append(self._attach_loc(Param(ptype, pname_tok.value), pname_tok))
 
                 if self.match("SYMBOL", ")"):
                     break
@@ -284,6 +286,8 @@ class Parser:
                 return self.parse_while()
             if tok.value == "for":
                 return self.parse_for()
+            if tok.value == "switch":
+                return self.parse_switch()
             if tok.value == "break":
                 break_tok = tok
                 self.advance()
@@ -350,6 +354,59 @@ class Parser:
         body = self.parse_statement()
         return self._attach_loc(ForStmt(init, cond, step, body), for_tok)
 
+    def parse_switch(self):
+        sw_tok = self.expect("KEYWORD", "switch")
+        self.expect("SYMBOL", "(")
+        expr = self.parse_expression()
+        self.expect("SYMBOL", ")")
+        self.expect("SYMBOL", "{")
+
+        cases = []
+        while True:
+            tok = self.current()
+            if tok is None:
+                self._raise_syntax_error(None, "unexpected end of input in switch body")
+            if tok.type == "SYMBOL" and tok.value == "}":
+                self.advance()
+                break
+            if tok.type == "KEYWORD" and tok.value == "case":
+                case_tok = tok
+                self.advance()
+                val_tok = self.expect("NUMBER")
+                val = self._attach_loc(Literal("int", int(val_tok.value)), val_tok)
+                self.expect("SYMBOL", ":")
+                body = self._parse_case_body()
+                node = CaseClause(val, body)
+                cases.append(self._attach_loc(node, case_tok))
+            elif tok.type == "KEYWORD" and tok.value == "default":
+                def_tok = tok
+                self.advance()
+                self.expect("SYMBOL", ":")
+                body = self._parse_case_body()
+                node = CaseClause(None, body)
+                cases.append(self._attach_loc(node, def_tok))
+            else:
+                self._raise_syntax_error(tok, "expected 'case' or 'default' in switch body")
+
+        return self._attach_loc(SwitchStmt(expr, cases), sw_tok)
+
+    def _parse_case_body(self):
+        """Collect statements until the next case/default/closing brace."""
+        stmts = []
+        while True:
+            tok = self.current()
+            if tok is None:
+                break
+            if tok.type == "SYMBOL" and tok.value == "}":
+                break
+            if tok.type == "KEYWORD" and tok.value in ("case", "default"):
+                break
+            try:
+                stmts.append(self.parse_statement())
+            except ParseError as e:
+                self.errors.append(str(e))
+                self._sync_to_next_statement()
+        return stmts
 
     def parse_expression(self):
         return self.parse_assignment()

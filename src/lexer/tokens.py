@@ -3,10 +3,11 @@
 KEYWORDS = {
     "uint32", "int", "float", "bool", "char", "void", "const",
     "if", "else", "while", "for", "break", "continue", "return",
+    "switch", "case", "default",
 }
 SYMBOLS_1 = {
     "+", "-", "*", "/", "%", "=", ";", ",", "(", ")", "{", "}",
-    "[", "]", "<", ">", "!",
+    "[", "]", "<", ">", "!", ":",
 }
 SYMBOLS_2 = {"<=", ">=", "==", "!=", "&&", "||", "++", "--"}
 CHARS_STARTING_2 = {s[0] for s in SYMBOLS_2}

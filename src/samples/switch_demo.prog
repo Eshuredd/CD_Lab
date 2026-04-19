@@ -1,0 +1,31 @@
+// switch_demo.prog — demonstrates switch / case / default / break
+
+int describe(int n) {
+    int result;
+    result = 0;
+    switch (n) {
+        case 1:
+            result = 100;
+            break;
+        case 2:
+            result = 200;
+            break;
+        case 3:
+            result = 300;
+            break;
+        default:
+            result = -1;
+            break;
+    }
+    return result;
+}
+
+int main() {
+    int i;
+    int r;
+    for (i = 0; i < 5; i = i + 1) {
+        r = describe(i);
+        print(r);
+    }
+    return 0;
+}

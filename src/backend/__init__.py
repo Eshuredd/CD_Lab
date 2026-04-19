@@ -1,4 +1,4 @@
-"""IR → assembly (RISC-V / x86-64) or C++ via ``backend.cpp_transpile`` / ``main --emit-cpp``."""
+"""IR → assembly: RV32+ecall (Ripes) or NASM+syscalls (bare ld), or C++ via ``cpp_transpile`` / ``--emit-cpp``."""
 
 from .riscv import RiscVBackend
 

@@ -8,7 +8,8 @@ class TypeChecker:
         self.supported_types = ["int", "uint32", "float", "bool", "char", "void"]
         self.global_symbols = SymbolTable()
         self.current_function_def = None
-        self._loop_depth = 0  # for break/continue: must be inside a loop
+        self._loop_depth = 0    # for continue: must be inside a loop
+        self._switch_depth = 0  # for break: also valid inside switch
 
         # Built-in functions
         self.global_symbols.define(FunctionSymbol("readInt", "int", []))
@@ -119,12 +120,33 @@ class TypeChecker:
                 self._loop_depth -= 1
 
         elif isinstance(statement, BreakStmt):
-            if self._loop_depth <= 0:
-                self._err("break outside loop", statement)
+            if self._loop_depth <= 0 and self._switch_depth <= 0:
+                self._err("break outside loop or switch", statement)
 
         elif isinstance(statement, ContinueStmt):
             if self._loop_depth <= 0:
                 self._err("continue outside loop", statement)
+
+        elif isinstance(statement, SwitchStmt):
+            subj_type = self.check_expression(statement.expr, scope)
+            if subj_type not in ("int", "uint32", "char"):
+                self._err("switch expression must be int, uint32, or char", statement)
+            seen_default = False
+            self._switch_depth += 1
+            try:
+                for clause in statement.cases:
+                    if clause.value is None:
+                        if seen_default:
+                            self._err("duplicate default in switch", clause)
+                        seen_default = True
+                    else:
+                        val_type = self.check_expression(clause.value, scope)
+                        if val_type != subj_type:
+                            self._err("case value type does not match switch expression", clause.value)
+                    for stmt in clause.body:
+                        self.check_statement(stmt, scope)
+            finally:
+                self._switch_depth -= 1
 
         elif isinstance(statement, ReturnStmt):
             expected_type = self.current_function_def.return_type

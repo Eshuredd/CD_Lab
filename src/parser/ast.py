@@ -181,3 +181,16 @@ class Call(ASTNode):
         self.callee = callee
         self.args = args
 
+
+class CaseClause(ASTNode):
+    """One arm of a switch: `case <value>: <stmts>` or `default: <stmts>`."""
+    def __init__(self, value, body):
+        self.value = value   # Literal (int), or None for the default clause
+        self.body = body     # list[ASTNode] – statements in this arm
+
+
+class SwitchStmt(ASTNode):
+    def __init__(self, expr, cases):
+        self.expr = expr     # the switch expression
+        self.cases = cases   # list[CaseClause]
+

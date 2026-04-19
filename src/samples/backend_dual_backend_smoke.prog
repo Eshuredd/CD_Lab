@@ -1,6 +1,6 @@
 // backend_dual_backend_smoke.prog
-// A single program intended to be compiled for BOTH backends:
-//   --arch riscv   and   --arch x86_64
+// Compile with either backend (no libc in either case):
+//   --arch riscv   (Ripes)   or   --arch x86_64   (nasm + ld / online)
 //
 // It tries to cover:
 //   * string + char printing

@@ -112,7 +112,6 @@ class CppTranspileBackend:
                 if ins.op == "CONST" and isinstance(ins.args[1], tuple) and ins.args[1][0] == "string":
                     self._intern_str(ins.args[1][1])
 
-        self._ln("// Generated from IR. Compile as C++17: g++ -std=c++17 -O2 -o prog out.cpp")
         for h in ("<cstdint>", "<cstdio>", "<cstdlib>", "<vector>"):
             self._ln(f"#include {h}")
         self._ln("")

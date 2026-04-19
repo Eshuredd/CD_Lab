@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Tuple, Optional, Set
 
 from parser.ast import ASTNode, Program
-from ir.ir import IRProgram, IRFunction, Instruction, is_label
+from ir.ir import IRProgram, IRFunction, Instruction
 
 
 def _escape_label(s: str) -> str:
@@ -163,6 +163,44 @@ def _build_basic_blocks(func: IRFunction) -> Dict[str, BasicBlock]:
                 block.successors.append(fall_through)
 
     return blocks
+
+
+def cfg_to_dot(program: IRProgram) -> str:
+    """
+    Emit a control-flow graph (one node per basic block, edges = successors)
+    as Graphviz DOT. Uses _build_basic_blocks per IR function.
+    """
+    lines: List[str] = [
+        "digraph CFG {",
+        "  node [shape=box, fontname=\"Courier\"];",
+        "  rankdir=TB;",
+    ]
+
+    for func in program.functions:
+        blocks = _build_basic_blocks(func)
+        if not blocks:
+            continue
+
+        lines.append(f"  subgraph \"cluster_{func.name}\" {{")
+        lines.append(f"    label=\"{_escape_label(func.name)}\";")
+
+        for bname, block in blocks.items():
+            ins_bits: List[str] = []
+            for insn in block.instructions:
+                ins_bits.append(_escape_label(repr(insn)))
+            inner = "\\l".join(ins_bits) + ("\\l" if ins_bits else "")
+            label = _escape_label(bname) + "\\n" + inner
+            lines.append(f"    \"{bname}\" [label=\"{label}\"];")
+
+        for bname, block in blocks.items():
+            for succ in block.successors:
+                lines.append(f"    \"{bname}\" -> \"{succ}\";")
+
+        lines.append("  }")
+
+    lines.append("}")
+    return "\n".join(lines)
+
 
 def ir_linear_to_dot(program: IRProgram) -> str:
     """

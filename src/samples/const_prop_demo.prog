@@ -1,0 +1,12 @@
+// const_prop_demo.prog — exercises constant propagation across STORE/LOAD.
+
+int main() {
+    int x;
+    int y;
+    int z;
+    x = 5;
+    y = x + 3;
+    z = y * 2;
+    print(z);
+    return 0;
+}

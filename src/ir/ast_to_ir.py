@@ -6,7 +6,7 @@ from typing import Any, List, Optional
 from parser.ast import (
     Program, FunctionDecl, Block, VarDecl, IfStmt, WhileStmt, ForStmt,
     BreakStmt, ContinueStmt, ReturnStmt, ExprStmt, Assign, BinaryOp, UnaryOp,
-    Literal, Variable, ArrayAccess, Call,
+    Literal, Variable, ArrayAccess, Call, SwitchStmt,
 )
 from .ir import (
     Instruction, IRProgram, IRFunction,
@@ -103,7 +103,13 @@ class IRBuilder:
         elif isinstance(stmt, BreakStmt):
             self._e(JMP(self._loops[-1][0]))
         elif isinstance(stmt, ContinueStmt):
-            self._e(JMP(self._loops[-1][1]))
+            # Skip switch frames (continue_lbl is None) to find the enclosing loop.
+            for _, cont_lbl in reversed(self._loops):
+                if cont_lbl is not None:
+                    self._e(JMP(cont_lbl))
+                    break
+        elif isinstance(stmt, SwitchStmt):
+            self._switch(stmt)
         elif isinstance(stmt, ReturnStmt):
             self._e(RET(None if stmt.value is None else self._expr(stmt.value)))
         elif isinstance(stmt, ExprStmt) and stmt.expr:
@@ -112,6 +118,41 @@ class IRBuilder:
             self._block(stmt)
         else:
             raise TypeError(f"Unknown statement: {type(stmt)}")
+
+    def _switch(self, stmt: SwitchStmt) -> None:
+        """Lower a switch statement to a comparison chain + labelled case blocks."""
+        subj = self._expr(stmt.expr)
+        end_lbl = self._lbl()
+
+        # Assign a fresh label to every case arm.
+        case_labels = [self._lbl() for _ in stmt.cases]
+        default_idx = next(
+            (i for i, c in enumerate(stmt.cases) if c.value is None), None
+        )
+
+        # Emit the dispatch: for each non-default arm compare and jump.
+        for i, clause in enumerate(stmt.cases):
+            if clause.value is not None:
+                val = self._expr(clause.value)
+                cmp = self._tmp()
+                self._e(EQ(cmp, subj, val))
+                self._e(JMP_IF(cmp, case_labels[i]))
+
+        # Fall through to default (or skip the switch entirely).
+        self._e(JMP(case_labels[default_idx] if default_idx is not None else end_lbl))
+
+        # Push end_lbl as the break target; None means "no continue" for switch.
+        self._loops.append((end_lbl, None))
+
+        # Emit each arm's body.
+        for i, clause in enumerate(stmt.cases):
+            self._e(LABEL(case_labels[i]))
+            for s in clause.body:
+                self._stmt(s)
+            # Fallthrough into next arm (C semantics); explicit break exits early.
+
+        self._loops.pop()
+        self._e(LABEL(end_lbl))
 
     def _expr(self, expr: Any) -> str:
         if isinstance(expr, Literal):

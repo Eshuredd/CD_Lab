@@ -6,12 +6,13 @@ from lexer.lexer import Lexer
 from parser.parser import Parser
 from symbol_table import SemanticError
 from type_checker import TypeChecker
+from unused_warnings import unused_variable_warnings
 from ir import ast_to_ir, validate, IRValidationError
 from optimizer import (
-    constant_folding, dead_code_elimination, strength_reduction,
-    cse, copy_propagation,
+    constant_folding, constant_propagation, dead_code_elimination,
+    strength_reduction, cse, copy_propagation, peephole, basic_block_opt,
 )
-from viz import ast_to_dot, ir_linear_to_dot
+from viz import ast_to_dot, ir_linear_to_dot, cfg_to_dot
 from backend import RiscVBackend
 
 
@@ -63,6 +64,13 @@ def main(argv: Optional[list[str]] = None) -> None:
         help="Emit IR after constant folding only (Graphviz DOT)",
     )
     cli.add_argument(
+        "--dump-ir-after-cprop",
+        metavar="FILE",
+        nargs="?",
+        const="-",
+        help="Emit IR after constant propagation pass (Graphviz DOT)",
+    )
+    cli.add_argument(
         "--dump-ir-after-sr",
         metavar="FILE",
         nargs="?",
@@ -84,11 +92,32 @@ def main(argv: Optional[list[str]] = None) -> None:
         help="Emit IR after copy propagation pass (Graphviz DOT)",
     )
     cli.add_argument(
+        "--dump-ir-after-peephole",
+        metavar="FILE",
+        nargs="?",
+        const="-",
+        help="Emit IR after peephole pass (Graphviz DOT)",
+    )
+    cli.add_argument(
+        "--dump-ir-after-bb",
+        metavar="FILE",
+        nargs="?",
+        const="-",
+        help="Emit IR after basic-block optimization pass (Graphviz DOT)",
+    )
+    cli.add_argument(
         "--dump-ir-after",
         metavar="FILE",
         nargs="?",
         const="-",
-        help="Emit fully optimized IR (CF + SR + DCE + CSE + CP) as Graphviz DOT",
+        help="Emit fully optimized IR (CF + CProp + SR + DCE + CSE + CP + peephole + BB) as Graphviz DOT",
+    )
+    cli.add_argument(
+        "--dump-cfg-dot",
+        metavar="FILE",
+        nargs="?",
+        const="-",
+        help="Emit control-flow graph (basic blocks) as Graphviz DOT for final IR",
     )
     cli.add_argument(
         "--no-optimize",
@@ -107,7 +136,11 @@ def main(argv: Optional[list[str]] = None) -> None:
         "--arch",
         choices=["riscv", "x86_64"],
         default="riscv",
-        help="Target for --emit-asm (default: riscv).",
+        help=(
+            "Target for --emit-asm (default: riscv).\n"
+            "  riscv  = RV32IM + ecall I/O for Ripes (ripes.me).\n"
+            "  x86_64 = NASM + Linux syscalls only (nasm+ld / online compilers; no libc)."
+        ),
     )
     cli.add_argument(
         "--emit-cpp",
@@ -158,6 +191,8 @@ def main(argv: Optional[list[str]] = None) -> None:
         if semantic_ok:
             log("Semantic analysis OK")
             log("-" * 80)
+            for wmsg in unused_variable_warnings(ast, source_path=str(Path(args.source))):
+                print(wmsg)
 
     if errors:
         print("\nErrors:")
@@ -205,7 +240,39 @@ def main(argv: Optional[list[str]] = None) -> None:
         if args.dump_ir_after_cf is not None:
             _write_output(args.dump_ir_after_cf, ir_linear_to_dot(after_cf_program))
 
-        sr_result = strength_reduction(after_cf_program)
+        # Iterate constant propagation + constant folding to a fixed point so
+        # each newly-folded CONST can propagate further and vice versa.
+        after_cprop_program = after_cf_program
+        cprop_total = 0
+        post_fold_total = 0
+        while True:
+            cprop_result = constant_propagation(after_cprop_program)
+            after_cprop_program = cprop_result.program
+            cprop_total += cprop_result.total_propagated
+            if cprop_result.total_propagated == 0:
+                break
+            cf_iter = constant_folding(after_cprop_program)
+            after_cprop_program = cf_iter.program
+            post_fold_total += cf_iter.total_folds
+            if cf_iter.total_folds == 0:
+                break
+
+        log(
+            "Constant Propagation Pass:\n"
+            f"  Total: {cprop_total} propagation(s); "
+            f"{post_fold_total} additional fold(s) from re-folding propagated CONSTs"
+        )
+        log("-" * 80)
+        log("\nIR (after constant propagation):")
+        log(after_cprop_program)
+        log("-" * 80)
+
+        if args.dump_ir_after_cprop is not None:
+            _write_output(
+                args.dump_ir_after_cprop, ir_linear_to_dot(after_cprop_program)
+            )
+
+        sr_result = strength_reduction(after_cprop_program)
         after_sr_program = sr_result.program
         log(sr_result.summary())
         log("-" * 80)
@@ -246,7 +313,31 @@ def main(argv: Optional[list[str]] = None) -> None:
         if args.dump_ir_after_cp is not None:
             _write_output(args.dump_ir_after_cp, ir_linear_to_dot(optimized_program))
 
-        # Final DCE sweep to clean up any temps made redundant by CSE / CP
+        ph_result = peephole(optimized_program)
+        optimized_program = ph_result.program
+        log(ph_result.summary())
+        log("-" * 80)
+        log("\nIR (after peephole):")
+        log(optimized_program)
+        log("-" * 80)
+
+        if args.dump_ir_after_peephole is not None:
+            _write_output(
+                args.dump_ir_after_peephole, ir_linear_to_dot(optimized_program)
+            )
+
+        bb_result = basic_block_opt(optimized_program)
+        optimized_program = bb_result.program
+        log(bb_result.summary())
+        log("-" * 80)
+        log("\nIR (after basic-block optimization):")
+        log(optimized_program)
+        log("-" * 80)
+
+        if args.dump_ir_after_bb is not None:
+            _write_output(args.dump_ir_after_bb, ir_linear_to_dot(optimized_program))
+
+        # Final DCE sweep to clean up any temps made redundant by CSE / CP / peephole / BB
         dce2 = dead_code_elimination(optimized_program)
         optimized_program = dce2.program
         if dce2.total_removed:
@@ -270,6 +361,9 @@ def main(argv: Optional[list[str]] = None) -> None:
     if args.dump_ir_after is not None:
         after_dot = ir_linear_to_dot(optimized_program)
         _write_output(args.dump_ir_after, after_dot)
+
+    if args.dump_cfg_dot is not None:
+        _write_output(args.dump_cfg_dot, cfg_to_dot(optimized_program))
 
     need_asm = args.emit_asm is not None
     asm_text: Optional[str] = None
