@@ -30,6 +30,9 @@ from typing import Dict, List, Tuple
 
 from ir.ir import Instruction, IRFunction, IRProgram
 
+_BR = {"JMP", "JMP_IF", "JMP_IF_NOT"}
+_STOP = {"RET", "EXIT"}
+
 
 @dataclass
 class _Block:
@@ -55,13 +58,13 @@ def _split_blocks(func: IRFunction) -> List[_Block]:
         op = ins.op
         if op == "LABEL":
             leaders.add(i)
-        if op in ("JMP", "JMP_IF", "JMP_IF_NOT"):
+        if op in _BR:
             tgt = ins.args[-1]
             if tgt in label_to_idx:
                 leaders.add(label_to_idx[tgt])
             if i + 1 < len(insns):
                 leaders.add(i + 1)
-        elif op in ("RET", "EXIT") and i + 1 < len(insns):
+        elif op in _STOP and i + 1 < len(insns):
             leaders.add(i + 1)
 
     sorted_leaders = sorted(leaders)
@@ -104,7 +107,7 @@ def _recompute_cfg(blocks: List[_Block]) -> None:
                 b.succs.append(tgt)
             if fall:
                 b.succs.append(fall)
-        elif op in ("RET", "EXIT"):
+        elif op in _STOP:
             pass
         else:
             if fall:
@@ -247,9 +250,7 @@ def _bb_func(func: IRFunction) -> Tuple[IRFunction, Dict[str, int]]:
         if t == 0 and u == 0 and m == 0:
             break
 
-    new_insns: List[Instruction] = []
-    for b in blocks:
-        new_insns.extend(b.insns)
+    new_insns = [ins for b in blocks for ins in b.insns]
 
     stats = {
         "jump_threaded": threaded,

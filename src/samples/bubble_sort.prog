@@ -1,0 +1,31 @@
+
+// Expected output: 1 2 4 5 8
+int main() {
+    int arr[5];
+    int i;
+    int j;
+    int tmp;
+
+    arr[0] = 5;
+    arr[1] = 1;
+    arr[2] = 4;
+    arr[3] = 2;
+    arr[4] = 8;
+
+    for (i = 0; i < 4; i = i + 1) {
+        for (j = 0; j < 4 - i; j = j + 1) {
+            if (arr[j] > arr[j + 1]) {
+                tmp = arr[j];
+                arr[j] = arr[j + 1];
+                arr[j + 1] = tmp;
+            }
+        }
+    }
+
+    // Print sorted result
+    for (i = 0; i < 5; i = i + 1) {
+        print(arr[i]);
+    }
+
+    return 0;
+}

@@ -34,6 +34,7 @@ from ir.ir import CONST, Instruction, IRFunction, IRProgram
 
 _TRUE_SELF = {"EQ", "LE", "GE"}
 _FALSE_SELF = {"NE", "LT", "GT"}
+_SELF_OPS = _TRUE_SELF | _FALSE_SELF
 _TERMINATORS = {"JMP", "RET", "EXIT"}
 _FLIP = {"JMP_IF": "JMP_IF_NOT", "JMP_IF_NOT": "JMP_IF"}
 
@@ -63,7 +64,7 @@ def _peephole_once(insns: List[Instruction]) -> Tuple[List[Instruction], int]:
         ins = insns[i]
 
         # Self-comparison folding.
-        if ins.op in _TRUE_SELF | _FALSE_SELF:
+        if ins.op in _SELF_OPS:
             folded = _self_compare_fold(ins)
             if folded is not None:
                 out.append(folded)
@@ -83,9 +84,10 @@ def _peephole_once(insns: List[Instruction]) -> Tuple[List[Instruction], int]:
             and len(ins.args) == 2
             and ins.args[1] == insns[i + 2].args[0]
         ):
+            flip_op = _FLIP[ins.op]
             cond = ins.args[0]
             target = insns[i + 1].args[0]
-            out.append(Instruction(_FLIP[ins.op], [cond, target]))
+            out.append(Instruction(flip_op, [cond, target]))
             out.append(insns[i + 2])
             changes += 1
             i += 3

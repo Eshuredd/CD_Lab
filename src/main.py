@@ -28,6 +28,7 @@ def _write_output(target: Optional[str], contents: str) -> None:
 
 
 def main(argv: Optional[list[str]] = None) -> None:
+    all_optim_passes = ["cf", "cprop", "sr", "dce", "cse", "cp", "peephole", "bb", "dce2"]
     cli = argparse.ArgumentParser(description="Tiny compiler front-end with IR + visualization")
     cli.add_argument(
         "source",
@@ -125,6 +126,16 @@ def main(argv: Optional[list[str]] = None) -> None:
         help="Disable optimization passes (constant folding, strength reduction, dead-code elimination, etc.)",
     )
     cli.add_argument(
+        "--optim",
+        metavar="LIST",
+        default="all",
+        help=(
+            "Comma-separated optimization pass list (default: all). "
+            "Use 'none' to disable. "
+            "Available: cf,cprop,sr,dce,cse,cp,peephole,bb,dce2"
+        ),
+    )
+    cli.add_argument(
         "--emit-asm",
         metavar="FILE",
         nargs="?",
@@ -152,6 +163,24 @@ def main(argv: Optional[list[str]] = None) -> None:
 
     args = cli.parse_args(argv)
     log = print
+
+    raw_optim = args.optim.strip().lower()
+    if raw_optim == "all":
+        selected_optim_passes = set(all_optim_passes)
+    elif raw_optim in {"none", ""}:
+        selected_optim_passes = set()
+    else:
+        selected_optim_passes = {
+            p.strip() for p in raw_optim.split(",") if p.strip()
+        }
+        unknown = sorted(selected_optim_passes - set(all_optim_passes))
+        if unknown:
+            cli.error(
+                "Unknown pass name(s) in --optim: "
+                + ", ".join(unknown)
+                + ". Available: "
+                + ",".join(all_optim_passes)
+            )
 
     with open(args.source, encoding="utf-8") as f:
         code = f.read()
@@ -228,122 +257,136 @@ def main(argv: Optional[list[str]] = None) -> None:
         _write_output(args.dump_ir_before, before_dot)
 
     optimized_program = ir_program
-    if not args.no_optimize:
-        cf_result = constant_folding(ir_program)
-        after_cf_program = cf_result.program
-        log(cf_result.summary())
-        log("-" * 80)
-        log("\nIR (after constant folding):")
-        log(after_cf_program)
-        log("-" * 80)
+    if not args.no_optimize and selected_optim_passes:
+        current_program = ir_program
+
+        if "cf" in selected_optim_passes:
+            cf_result = constant_folding(current_program)
+            current_program = cf_result.program
+            log(cf_result.summary())
+            log("-" * 80)
+            log("\nIR (after constant folding):")
+            log(current_program)
+            log("-" * 80)
 
         if args.dump_ir_after_cf is not None:
-            _write_output(args.dump_ir_after_cf, ir_linear_to_dot(after_cf_program))
+            _write_output(args.dump_ir_after_cf, ir_linear_to_dot(current_program))
 
-        # Iterate constant propagation + constant folding to a fixed point so
-        # each newly-folded CONST can propagate further and vice versa.
-        after_cprop_program = after_cf_program
-        cprop_total = 0
-        post_fold_total = 0
-        while True:
-            cprop_result = constant_propagation(after_cprop_program)
-            after_cprop_program = cprop_result.program
-            cprop_total += cprop_result.total_propagated
-            if cprop_result.total_propagated == 0:
-                break
-            cf_iter = constant_folding(after_cprop_program)
-            after_cprop_program = cf_iter.program
-            post_fold_total += cf_iter.total_folds
-            if cf_iter.total_folds == 0:
-                break
+        if "cprop" in selected_optim_passes:
+            # Iterate constant propagation (+ optional re-folding) to a fixed point.
+            cprop_total = 0
+            post_fold_total = 0
+            while True:
+                cprop_result = constant_propagation(current_program)
+                current_program = cprop_result.program
+                cprop_total += cprop_result.total_propagated
+                if cprop_result.total_propagated == 0:
+                    break
+                if "cf" in selected_optim_passes:
+                    cf_iter = constant_folding(current_program)
+                    current_program = cf_iter.program
+                    post_fold_total += cf_iter.total_folds
+                    if cf_iter.total_folds == 0:
+                        break
+                else:
+                    break
 
-        log(
-            "Constant Propagation Pass:\n"
-            f"  Total: {cprop_total} propagation(s); "
-            f"{post_fold_total} additional fold(s) from re-folding propagated CONSTs"
-        )
-        log("-" * 80)
-        log("\nIR (after constant propagation):")
-        log(after_cprop_program)
-        log("-" * 80)
+            log(
+                "Constant Propagation Pass:\n"
+                f"  Total: {cprop_total} propagation(s); "
+                f"{post_fold_total} additional fold(s) from re-folding propagated CONSTs"
+            )
+            log("-" * 80)
+            log("\nIR (after constant propagation):")
+            log(current_program)
+            log("-" * 80)
 
         if args.dump_ir_after_cprop is not None:
             _write_output(
-                args.dump_ir_after_cprop, ir_linear_to_dot(after_cprop_program)
+                args.dump_ir_after_cprop, ir_linear_to_dot(current_program)
             )
 
-        sr_result = strength_reduction(after_cprop_program)
-        after_sr_program = sr_result.program
-        log(sr_result.summary())
-        log("-" * 80)
-        log("\nIR (after strength reduction):")
-        log(after_sr_program)
-        log("-" * 80)
+        if "sr" in selected_optim_passes:
+            sr_result = strength_reduction(current_program)
+            current_program = sr_result.program
+            log(sr_result.summary())
+            log("-" * 80)
+            log("\nIR (after strength reduction):")
+            log(current_program)
+            log("-" * 80)
 
         if args.dump_ir_after_sr is not None:
-            _write_output(args.dump_ir_after_sr, ir_linear_to_dot(after_sr_program))
+            _write_output(args.dump_ir_after_sr, ir_linear_to_dot(current_program))
 
-        dce_result = dead_code_elimination(after_sr_program)
-        after_dce_program = dce_result.program
-        log(dce_result.summary())
-        log("-" * 80)
-        log("\nIR (after dead code elimination):")
-        log(after_dce_program)
-        log("-" * 80)
+        if "dce" in selected_optim_passes:
+            dce_result = dead_code_elimination(current_program)
+            current_program = dce_result.program
+            log(dce_result.summary())
+            log("-" * 80)
+            log("\nIR (after dead code elimination):")
+            log(current_program)
+            log("-" * 80)
 
-        cse_result = cse(after_dce_program)
-        after_cse_program = cse_result.program
-        log(cse_result.summary())
-        log("-" * 80)
-        log("\nIR (after CSE):")
-        log(after_cse_program)
-        log("-" * 80)
+        if "cse" in selected_optim_passes:
+            cse_result = cse(current_program)
+            current_program = cse_result.program
+            log(cse_result.summary())
+            log("-" * 80)
+            log("\nIR (after CSE):")
+            log(current_program)
+            log("-" * 80)
 
         if args.dump_ir_after_cse is not None:
-            _write_output(args.dump_ir_after_cse, ir_linear_to_dot(after_cse_program))
+            _write_output(args.dump_ir_after_cse, ir_linear_to_dot(current_program))
 
-        cp_result = copy_propagation(after_cse_program)
-        optimized_program = cp_result.program
-        log(cp_result.summary())
-        log("-" * 80)
-        log("\nIR (after copy propagation):")
-        log(optimized_program)
-        log("-" * 80)
+        if "cp" in selected_optim_passes:
+            cp_result = copy_propagation(current_program)
+            current_program = cp_result.program
+            log(cp_result.summary())
+            log("-" * 80)
+            log("\nIR (after copy propagation):")
+            log(current_program)
+            log("-" * 80)
 
         if args.dump_ir_after_cp is not None:
-            _write_output(args.dump_ir_after_cp, ir_linear_to_dot(optimized_program))
+            _write_output(args.dump_ir_after_cp, ir_linear_to_dot(current_program))
 
-        ph_result = peephole(optimized_program)
-        optimized_program = ph_result.program
-        log(ph_result.summary())
-        log("-" * 80)
-        log("\nIR (after peephole):")
-        log(optimized_program)
-        log("-" * 80)
+        if "peephole" in selected_optim_passes:
+            ph_result = peephole(current_program)
+            current_program = ph_result.program
+            log(ph_result.summary())
+            log("-" * 80)
+            log("\nIR (after peephole):")
+            log(current_program)
+            log("-" * 80)
 
         if args.dump_ir_after_peephole is not None:
             _write_output(
-                args.dump_ir_after_peephole, ir_linear_to_dot(optimized_program)
+                args.dump_ir_after_peephole, ir_linear_to_dot(current_program)
             )
 
-        bb_result = basic_block_opt(optimized_program)
-        optimized_program = bb_result.program
-        log(bb_result.summary())
-        log("-" * 80)
-        log("\nIR (after basic-block optimization):")
-        log(optimized_program)
-        log("-" * 80)
+        if "bb" in selected_optim_passes:
+            bb_result = basic_block_opt(current_program)
+            current_program = bb_result.program
+            log(bb_result.summary())
+            log("-" * 80)
+            log("\nIR (after basic-block optimization):")
+            log(current_program)
+            log("-" * 80)
 
         if args.dump_ir_after_bb is not None:
-            _write_output(args.dump_ir_after_bb, ir_linear_to_dot(optimized_program))
+            _write_output(args.dump_ir_after_bb, ir_linear_to_dot(current_program))
 
-        # Final DCE sweep to clean up any temps made redundant by CSE / CP / peephole / BB
-        dce2 = dead_code_elimination(optimized_program)
-        optimized_program = dce2.program
-        if dce2.total_removed:
-            log(f"Post-CP DCE: removed {dce2.total_removed} more instruction(s)")
-            log(optimized_program)
-            log("-" * 80)
+        # Optional final DCE sweep after late structural optimizations.
+        if "dce2" in selected_optim_passes:
+            dce2 = dead_code_elimination(current_program)
+            current_program = dce2.program
+            if dce2.total_removed:
+                log(f"Post-CP DCE: removed {dce2.total_removed} more instruction(s)")
+                log(current_program)
+                log("-" * 80)
+
+        optimized_program = current_program
 
         try:
             validate(optimized_program)
@@ -356,7 +399,7 @@ def main(argv: Optional[list[str]] = None) -> None:
             )
             return
     else:
-        log("Optimizations skipped (--no-optimize).")
+        log("Optimizations skipped (--no-optimize or --optim=none).")
 
     if args.dump_ir_after is not None:
         after_dot = ir_linear_to_dot(optimized_program)

@@ -1,0 +1,41 @@
+
+int main() {
+    int i;
+    int acc;
+    int flag;
+
+    i = 0;
+    acc = 0;
+    flag = 1;
+
+    // Loop + nested branches create many labels and jump edges.
+    while (i < 8) {
+        // continue path tends to introduce short jump-only transition blocks.
+        if (i == 2) {
+            i = i + 1;
+            continue;
+        }
+
+        // break path creates an additional branch exit edge.
+        if (i == 6) {
+            break;
+        }
+
+        // Two-way branch usually forms a linear chain of basic blocks.
+        if ((i % 2) == 0) {
+            acc = acc + i;
+        } else {
+            acc = acc + 1;
+        }
+
+        i = i + 1;
+    }
+
+    // Final branch creates merge points and return edges in CFG.
+    if (flag == 1) {
+        print(acc);
+        return 0;
+    } else {
+        return 1;
+    }
+}

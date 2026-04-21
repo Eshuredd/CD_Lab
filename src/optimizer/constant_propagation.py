@@ -60,7 +60,7 @@ def _cp_func(func: IRFunction) -> Tuple[IRFunction, int]:
 
         if op == "STORE" and len(a) == 2:
             var, src = a[0], a[1]
-            if isinstance(src, str) and src in cm_temp:
+            if isinstance(src, str) and src.startswith("%") and src in cm_temp:
                 cm_var[var] = cm_temp[src]
             else:
                 cm_var.pop(var, None)
