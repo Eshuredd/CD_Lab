@@ -80,7 +80,9 @@ class RiscVBackend:
         self.out.append("    " + s)
 
     def lbl(self, name: str) -> str:
-        return f".L{self.fn}_{name}"
+        # Some educational assemblers (e.g. Ripes-integrated syntax checkers)
+        # reject dot-prefixed local labels; keep labels plain/alphanumeric.
+        return f"L{self.fn}_{name}"
 
     def _build_frame(self, func: IRFunction):
         slots, arrs, cur = {}, {}, 0
