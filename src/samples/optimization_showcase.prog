@@ -63,7 +63,7 @@ int main() {
         w = z - x;           // tends to become 0
 
         if (w != 0) {
-            // Rare/ideally unreachable after optimization.
+            //unreachable after optimization.
             sum = sum + w;
         } else {
             sum = sum + 2;
